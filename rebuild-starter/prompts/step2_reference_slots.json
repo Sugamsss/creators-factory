@@ -1,0 +1,107 @@
+[
+  {
+    "slot_key": "front_normal_smile",
+    "label": "Front · Normal Smile (Selected Base)",
+    "include_base": true,
+    "prompt": null,
+    "prompt_confidence": "exact"
+  },
+  {
+    "slot_key": "turn_left_45",
+    "label": "Turn Left 45°",
+    "include_base": false,
+    "prompt": "turn her 45 degrees to left",
+    "prompt_confidence": "exact"
+  },
+  {
+    "slot_key": "turn_left_90",
+    "label": "Turn Left 90°",
+    "include_base": false,
+    "prompt": "turn her 90 degrees to left",
+    "prompt_confidence": "exact"
+  },
+  {
+    "slot_key": "turn_right_45",
+    "label": "Turn Right 45°",
+    "include_base": false,
+    "prompt": "turn her 45 degrees to right",
+    "prompt_confidence": "exact"
+  },
+  {
+    "slot_key": "turn_right_90",
+    "label": "Turn Right 90°",
+    "include_base": false,
+    "prompt": "turn her 90 degrees to right",
+    "prompt_confidence": "exact"
+  },
+  {
+    "slot_key": "look_up_45",
+    "label": "Look Up 45°",
+    "include_base": false,
+    "prompt": "turn her to look up 45 degrees",
+    "prompt_confidence": "exact"
+  },
+  {
+    "slot_key": "look_down_45",
+    "label": "Look Down 45°",
+    "include_base": false,
+    "prompt": "turn her to look down 45 degrees",
+    "prompt_confidence": "exact"
+  },
+  {
+    "slot_key": "smile_peaceful",
+    "label": "Peaceful Smile",
+    "include_base": false,
+    "prompt": "make her smile a bit peacefully",
+    "prompt_confidence": "exact"
+  },
+  {
+    "slot_key": "happy_extreme",
+    "label": "Extremely Happy",
+    "include_base": false,
+    "prompt": "make her extremely happy",
+    "prompt_confidence": "exact"
+  },
+  {
+    "slot_key": "sad_mild",
+    "label": "A Bit Sad",
+    "include_base": false,
+    "prompt": "make her a bit sad",
+    "prompt_confidence": "reconstructed_from_conversation_and_slot_key"
+  },
+  {
+    "slot_key": "sad_extreme",
+    "label": "Extremely Sad",
+    "include_base": false,
+    "prompt": "make her extremely sad",
+    "prompt_confidence": "exact"
+  },
+  {
+    "slot_key": "angry",
+    "label": "Angry",
+    "include_base": false,
+    "prompt": "make her angry",
+    "prompt_confidence": "exact"
+  },
+  {
+    "slot_key": "excited",
+    "label": "Excited",
+    "include_base": false,
+    "prompt": "make her excited",
+    "prompt_confidence": "exact"
+  },
+  {
+    "slot_key": "serious",
+    "label": "Serious",
+    "include_base": false,
+    "prompt": "make her serious",
+    "prompt_confidence": "reconstructed_from_confirmed_slot_and_user_decision"
+  },
+  {
+    "slot_key": "devastated",
+    "label": "Devastated",
+    "include_base": false,
+    "prompt": "make her devastated",
+    "prompt_confidence": "reconstructed_from_confirmed_slot_and_user_decision"
+  }
+]

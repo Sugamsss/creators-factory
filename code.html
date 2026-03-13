@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Avatar Management Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&amp;family=Inter:wght@300;400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#3d8b7a",
+                        "background-light": "#f0f4f3",
+                        "background-dark": "#0f1a18",
+                    },
+                    fontFamily: {
+                        display: ["Playfair Display", "serif"],
+                        sans: ["Inter", "sans-serif"],
+                    },
+                    borderRadius: {
+                        DEFAULT: "12px",
+                        'xl': '24px',
+                        '2xl': '32px',
+                        '3xl': '48px',
+                    },
+                },
+            },
+        };
+    </script>
+<style type="text/tailwindcss">
+:root {
+  --primary-color: #3d8b7a;
+}
+.grainy-bg {
+    background-color: #3d8b7a;
+    background-image: url(https://lh3.googleusercontent.com/aida-public/AB6AXuDy5SkVXYeLwGWi6uM9IAn_JnkW7lONdt1beILtLGMpyx2fLGWCl_SRIcnbbAL3bf7PMfF-VHx6UQ5faNuRqeYDHtAMJrn32LCNBkb5GVpVS8ouUNbzHv1yd1hBfYEEfBTFS9cZ4ARsjscaLlb21q1Etp91pAIlQnKJreYiRAnMWAOthlEjskfX6EPL3w9NJPP32SAt0UXwp-0rp3v440iv6sYplT4avcoHWbK25v1qxZa24jMDdsJiDZ-1yVAfHIv61rHWhTWwYqo);
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    background-size: cover;
+    background-position: center;
+}
+.glass-panel {
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+}
+.dark .glass-panel {
+    background: rgba(15, 26, 24, 0.65);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.glass-card {
+    background: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.dark .glass-card {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.glass-card:hover {
+    transform: translateY(-6px) scale(1.01);
+    background: rgba(255, 255, 255, 0.6);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+}
+.dark .glass-card:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+.sidebar-item-active {
+    background: rgba(61, 139, 122, 0.1);
+    color: var(--primary-color);
+}
+.sidebar-item-active .material-symbols-outlined {
+    font-variation-settings: 'FILL' 1;
+}
+.material-symbols-outlined {
+    font-variation-settings: 'wght' 300;
+    font-size: 22px;
+}
+</style>
+</head>
+<body class="font-sans text-slate-900 dark:text-slate-100 min-h-screen overflow-hidden">
+<div class="grainy-bg"></div>
+<div class="flex h-screen w-full overflow-hidden">
+<aside class="w-20 flex flex-col items-center py-8 z-10">
+<div class="mb-12">
+<div class="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center text-white shadow-lg shadow-primary/30 cursor-pointer">
+<span class="material-symbols-outlined">auto_awesome</span>
+</div>
+</div>
+<nav class="flex-1 flex flex-col gap-6 items-center">
+<a class="w-12 h-12 flex items-center justify-center rounded-2xl hover:bg-white/20 dark:hover:bg-white/5 transition-all group" href="#" title="Dashboard">
+<span class="material-symbols-outlined text-slate-500 group-hover:text-primary transition-colors">grid_view</span>
+</a>
+<a class="w-12 h-12 flex items-center justify-center rounded-2xl sidebar-item-active transition-all group" href="#" title="Avatars">
+<span class="material-symbols-outlined text-primary">face</span>
+</a>
+<a class="w-12 h-12 flex items-center justify-center rounded-2xl hover:bg-white/20 dark:hover:bg-white/5 transition-all group" href="#" title="Industries">
+<span class="material-symbols-outlined text-slate-500 group-hover:text-primary transition-colors">business_center</span>
+</a>
+<a class="w-12 h-12 flex items-center justify-center rounded-2xl hover:bg-white/20 dark:hover:bg-white/5 transition-all group" href="#" title="Scripts">
+<span class="material-symbols-outlined text-slate-500 group-hover:text-primary transition-colors">article</span>
+</a>
+<a class="w-12 h-12 flex items-center justify-center rounded-2xl hover:bg-white/20 dark:hover:bg-white/5 transition-all group" href="#" title="Videos">
+<span class="material-symbols-outlined text-slate-500 group-hover:text-primary transition-colors">play_circle</span>
+</a>
+<a class="w-12 h-12 flex items-center justify-center rounded-2xl hover:bg-white/20 dark:hover:bg-white/5 transition-all group" href="#" title="Automations">
+<span class="material-symbols-outlined text-slate-500 group-hover:text-primary transition-colors">bolt</span>
+</a>
+</nav>
+<div class="flex flex-col gap-6 items-center mt-auto">
+<button class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-white/20 dark:hover:bg-white/5 transition-colors" onclick="document.documentElement.classList.toggle('dark')">
+<span class="material-symbols-outlined text-slate-500">dark_mode</span>
+</button>
+<div class="relative group cursor-pointer">
+<img alt="User Profile" class="w-10 h-10 rounded-full object-cover border-2 border-white/50" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBalrvFYytIk-bmgz0TQ1YEyudkSEVYHUdmWxinCDyQEAK9Pdw8Oa-TikCiLkd881HlWr2nPeujSG93UnHgioqthQL0eFkEVOZCIPM8Ruzh3FB61xPADcIjdt19XqBBkWOKNYQqVU6qvCgJb1XD0uH_wEXwmo1iBdQwWjO0zn6fvxii4T3exkxhlWI8dmnVdi81g-uuUFhnv57NxmKlwlNZeEnbZdQQ4D9Zwc4AZxYZ2fNP_UXaYUHJqHUmzFZrUWEAkjXZzFld1mw"/>
+<div class="absolute inset-0 rounded-full ring-2 ring-primary ring-offset-2 ring-offset-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+</div>
+</div>
+</aside>
+<main class="flex-1 my-4 mr-4 glass-panel rounded-3xl flex flex-col overflow-hidden relative shadow-2xl">
+<header class="px-12 pt-12 pb-8 flex justify-between items-end border-b border-white/10">
+<div>
+<h1 class="font-display text-6xl font-normal tracking-tight mb-3">Avatars</h1>
+<p class="text-slate-500 dark:text-slate-400 font-medium tracking-[0.2em] text-[10px] uppercase">Orchestrate Your Digital Identities</p>
+</div>
+<div class="flex gap-4">
+<button class="bg-primary hover:opacity-95 text-white px-8 py-3.5 rounded-2xl flex items-center gap-3 transition-all shadow-xl shadow-primary/20 group">
+<span class="material-symbols-outlined group-hover:rotate-90 transition-transform">add</span>
+<span class="font-semibold text-sm">Create Persona</span>
+</button>
+</div>
+</header>
+<div class="flex-1 overflow-y-auto px-12 py-10 space-y-16 custom-scrollbar">
+<section>
+<div class="flex justify-between items-center mb-10">
+<div class="flex items-center gap-3">
+<div class="w-1 h-4 bg-primary rounded-full"></div>
+<h2 class="text-xs font-bold tracking-[0.25em] text-slate-400 dark:text-slate-500 uppercase">My Creations</h2>
+</div>
+<a class="text-xs font-bold text-primary/80 hover:text-primary transition-colors flex items-center gap-2 group" href="#">
+                        VIEW REPOSITORY <span class="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">arrow_forward</span>
+</a>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
+<div class="glass-card rounded-3xl overflow-hidden group">
+<div class="relative h-72 overflow-hidden">
+<img alt="Amy Avatar" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBrh4Iv68pxUnwU-YPurR7C0I7RLFmzbzauxT6dnWoghOEZk-fUJFYj422TtKL67i_3kUymR3SYVRvTl8Ekw9HP5b50Lt9OZ8CTtWfbWxbUoRpof7UllrF_wBWSDP0Us6HqAYFEc_JPLCVBDodRXvmzh3WzZAWX6RwJiB1wvmERl7wNxDfgTk0Bf9YugGI-7lY6IMWPuzSXhN-Jhn8UnP4uUD2HNCj_mVFGQSh17Az3XFyL7np7_OG0cfTrFcAXd0ty8yDr-FvrGYY"/>
+<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-80 group-hover:opacity-90 transition-opacity"></div>
+<div class="absolute bottom-6 left-6 right-6">
+<h3 class="font-display text-3xl text-white">Amy <span class="opacity-60 text-xl font-sans font-light ml-2">28</span></h3>
+<p class="text-white/60 text-xs font-medium tracking-wide uppercase mt-1">Customer Success</p>
+</div>
+</div>
+<div class="p-8">
+<p class="text-sm text-slate-600 dark:text-slate-400 leading-relaxed font-light">
+                                Professional customer specialist. Expert in empathy and speed.
+                            </p>
+<div class="mt-8 flex gap-3">
+<button class="flex-1 py-3 text-[10px] font-bold tracking-widest bg-primary/10 text-primary rounded-xl hover:bg-primary hover:text-white transition-all uppercase">Configure</button>
+<button class="flex-1 py-3 text-[10px] font-bold tracking-widest border border-slate-200 dark:border-white/10 rounded-xl hover:bg-white/20 transition-all uppercase">Deploy</button>
+</div>
+</div>
+</div>
+<div class="glass-card rounded-3xl overflow-hidden group">
+<div class="relative h-72 overflow-hidden">
+<img alt="Marcus Avatar" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAEigKzOSc8g66yuPudTfWySboVCiLPBpnZgQII-TdSHnjiSjS9uUHb-r70OAIXkZyFscSedsqrjArTBv9rc--JhMCTbAiFxfFUD7h9mpdP0hhP1G14wVVsHb1O7kOc1NHqeL7irrKaHrTOJbdL1qZHqjmzuJhTl0GcL1dBh7vXdAS2AfP-j7i1pUAYqqiSJ0KTYLckL9g1AbEZtmw1H_shpgviz1qJdFLiwjhlCs9Hzk3jP_dv8mPCA12WX_GiRWrOx1NUMOJcwrg"/>
+<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-80 group-hover:opacity-90 transition-opacity"></div>
+<div class="absolute bottom-6 left-6 right-6">
+<h3 class="font-display text-3xl text-white">Marcus <span class="opacity-60 text-xl font-sans font-light ml-2">34</span></h3>
+<p class="text-white/60 text-xs font-medium tracking-wide uppercase mt-1">Technical Lead</p>
+</div>
+</div>
+<div class="p-8">
+<p class="text-sm text-slate-600 dark:text-slate-400 leading-relaxed font-light">
+                                Calm, authoritative voice for product briefings and support.
+                            </p>
+<div class="mt-8 flex gap-3">
+<button class="flex-1 py-3 text-[10px] font-bold tracking-widest bg-primary/10 text-primary rounded-xl hover:bg-primary hover:text-white transition-all uppercase">Configure</button>
+<button class="flex-1 py-3 text-[10px] font-bold tracking-widest border border-slate-200 dark:border-white/10 rounded-xl hover:bg-white/20 transition-all uppercase">Deploy</button>
+</div>
+</div>
+</div>
+<div class="glass-card rounded-3xl overflow-hidden group cursor-pointer border-dashed border-2 flex flex-col items-center justify-center p-12 text-center min-h-[450px]">
+<div class="w-16 h-16 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center mb-6 group-hover:bg-primary group-hover:text-white transition-all">
+<span class="material-symbols-outlined text-3xl">add</span>
+</div>
+<h4 class="font-display text-xl mb-2">New Identity</h4>
+<p class="text-xs text-slate-400 dark:text-slate-500 max-w-[180px] leading-relaxed">Expand your digital workforce with a custom personality</p>
+</div>
+</div>
+</section>
+<section class="pb-12">
+<div class="flex items-center gap-3 mb-10">
+<div class="w-1 h-4 bg-slate-300 dark:bg-white/20 rounded-full"></div>
+<h2 class="text-xs font-bold tracking-[0.25em] text-slate-400 dark:text-slate-500 uppercase">Discover</h2>
+</div>
+<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-8">
+<div class="glass-card rounded-2xl p-6 flex flex-col items-center group cursor-pointer text-center">
+<div class="w-24 h-24 rounded-full overflow-hidden mb-6 relative">
+<img alt="Sarah" class="w-full h-full object-cover transition-transform group-hover:scale-110" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCEYpld0I04uDxvB-CtUvI_uLh51NbC7Ft2rTfPTVcBN6SOFvGPPhPo1f8G2-JNncAJgXroEG6jRDkFFYJ6FJiPemTc_JTCg1BeLhHDGZIArLz-cKP6UfTTQMtJFuxDM1bIF895I5TssyGEbqu-lVOxsNUr5F3ejaW6P4X1iyfaWsNQyf91t62gCQ0Cu-aLFgHUX2EYt3Ujw_YqZhOiz6HiFFsXL81HZOSVyLIuGhTdpIxrSj2r3lPVTpNydaOYp9MG3BsPBYSG1PE"/>
+<div class="absolute inset-0 ring-2 ring-primary/30 ring-inset rounded-full"></div>
+</div>
+<h4 class="font-display text-xl mb-2">Sarah</h4>
+<span class="text-[9px] font-bold tracking-widest text-primary uppercase bg-primary/10 px-3 py-1 rounded-full">Storyteller</span>
+</div>
+<div class="glass-card rounded-2xl p-6 flex flex-col items-center group cursor-pointer text-center">
+<div class="w-24 h-24 rounded-full overflow-hidden mb-6 relative">
+<img alt="David" class="w-full h-full object-cover transition-transform group-hover:scale-110" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCR8tr52l41o9a2dcdQLwQgfxa6c0bFIGL-ifdCXyMHG0m5ZIdHjN4U1y3o-va4UDRy7QxxF2bA02EROxwF4oQuUTj39OaNWqBbvfKLC4ddKGp_gYPPI7f8OEdwsmpKHyErvlHBfn-plx-CbOP_aRcpwn9kvGDoKbJvCxzTLbdg9QL1eCh8LbpgF3HmfluLDW_Efkf5CzCqbE4_PGU02_rNvdIGX3qun_B_Oe7PGtpPBto1pKB7x5iUnGh83mI4z7TaWiuPPtG-LqQ"/>
+<div class="absolute inset-0 ring-2 ring-slate-200 dark:ring-white/10 ring-inset rounded-full"></div>
+</div>
+<h4 class="font-display text-xl mb-2">David</h4>
+<span class="text-[9px] font-bold tracking-widest text-slate-400 uppercase bg-slate-100 dark:bg-white/5 px-3 py-1 rounded-full">News Anchor</span>
+</div>
+<div class="glass-card rounded-2xl p-6 flex flex-col items-center group cursor-pointer text-center">
+<div class="w-24 h-24 rounded-full overflow-hidden mb-6 relative">
+<img alt="Elena" class="w-full h-full object-cover transition-transform group-hover:scale-110" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBMzwOTcnDK26iQ7Mj7K3VS9dH7H2LhhpStnpwdF3Lnf5eEAZxe0ZRLfmv6TlOSmj0UA8AmrU5eBbY-FhdO78h4QP7rVEh2s3UsL1U9pvIrvdB8wjYS5mRuNxesPa5RwAmHtiZouDexdkmG52y9GHgr3LxcKo8emuf1O3ycf7wYHrH76EnAiC2NzP2TPqnxDu_fS1wJjVmpXughBALNldm_K-4ppnNDTAxBqMqr-BJvDpXWsHZQMofRM1skz56fqKsvBmFCCfo2mBI"/>
+<div class="absolute inset-0 ring-2 ring-slate-200 dark:ring-white/10 ring-inset rounded-full"></div>
+</div>
+<h4 class="font-display text-xl mb-2">Elena</h4>
+<span class="text-[9px] font-bold tracking-widest text-slate-400 uppercase bg-slate-100 dark:bg-white/5 px-3 py-1 rounded-full">Educator</span>
+</div>
+<div class="glass-card rounded-2xl p-6 flex flex-col items-center group cursor-pointer text-center">
+<div class="w-24 h-24 rounded-full overflow-hidden mb-6 relative">
+<img alt="Leo" class="w-full h-full object-cover transition-transform group-hover:scale-110" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD29kfePIM_z0lYGq7FU7M9dzZ7GzqhXlImF1m47B2I0TYZBvexPMpza6AMtwUIX1pIjOdpEOwQMT5hS7tQcws5EtPdjcY5MnURBXxrwAm2q6cO00lOq92PqjVW_OC8BtQecNRc9zbN8XmyJkgOPB_zeaK8SpepPffZtTPWD3ow_RfjiO12Vdsy5WYYvG7MxfhnCac6hjzAzSI5AiCGJXvzYmPR_9jr5b51Ci_UXfaTC0rutKTCCa86bStl32c72TiQJR5j7cOXHEU"/>
+<div class="absolute inset-0 ring-2 ring-slate-200 dark:ring-white/10 ring-inset rounded-full"></div>
+</div>
+<h4 class="font-display text-xl mb-2">Leo</h4>
+<span class="text-[9px] font-bold tracking-widest text-slate-400 uppercase bg-slate-100 dark:bg-white/5 px-3 py-1 rounded-full">Performance</span>
+</div>
+</div>
+</section>
+</div>
+</main>
+</div>
+
+</body></html>
