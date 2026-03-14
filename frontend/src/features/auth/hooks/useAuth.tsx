@@ -9,6 +9,7 @@ import {
   logout as apiLogout,
   signup as apiSignup,
 } from "../services/authApi";
+import { SessionExpiredError } from "@/shared/lib/api-client";
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -31,23 +32,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const currentUser = await getCurrentUser();
       setUser(currentUser);
-    } catch {
+    } catch (error) {
+      if (error instanceof SessionExpiredError) {
+        setUser(null);
+        return;
+      }
       setUser(null);
     }
   };
 
   useEffect(() => {
+    const handleSessionExpired = () => {
+      setUser(null);
+    };
+    window.addEventListener("auth:session-expired", handleSessionExpired);
     refreshUser().finally(() => setIsLoading(false));
+    return () => {
+      window.removeEventListener("auth:session-expired", handleSessionExpired);
+    };
   }, []);
 
   const login = async (email: string, password: string) => {
-    const response = await apiLogin({ email, password });
-    setUser(response.user);
+    await apiLogin({ email, password });
+    try {
+      const currentUser = await getCurrentUser();
+      setUser(currentUser);
+    } catch {
+      setUser(null);
+      throw new Error(
+        "Login succeeded but session cookie was not persisted. Check cookie settings (secure/samesite), host consistency (localhost vs 127.0.0.1), and restart both servers."
+      );
+    }
   };
 
   const signup = async (name: string, email: string, password: string) => {
-    const response = await apiSignup({ name, email, password });
-    setUser(response.user);
+    await apiSignup({ name, email, password });
+    try {
+      const currentUser = await getCurrentUser();
+      setUser(currentUser);
+    } catch {
+      setUser(null);
+      throw new Error(
+        "Signup succeeded but session cookie was not persisted. Check cookie settings (secure/samesite), host consistency (localhost vs 127.0.0.1), and restart both servers."
+      );
+    }
   };
 
   const logout = async () => {

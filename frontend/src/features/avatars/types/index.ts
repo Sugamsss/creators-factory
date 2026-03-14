@@ -1,5 +1,17 @@
-export type AvatarStatusTone = "amber" | "red" | "green" | "blue";
-export type AvatarType = "draft" | "deployment";
+export type AvatarBuildState =
+  | "draft_visual"
+  | "draft_appearance"
+  | "training_lora"
+  | "failed_training"
+  | "draft_personality"
+  | "ready"
+  | "soft_deleted";
+
+export type AvatarDeploymentSummary =
+  | "not_in_use"
+  | "in_use"
+  | "partially_paused"
+  | "fully_paused";
 
 export interface AvatarIndustry {
   id: number;
@@ -7,34 +19,58 @@ export interface AvatarIndustry {
   description?: string;
 }
 
-export interface AvatarDraft {
-  id: number;
-  name: string | null;
-  build_state: string;
-  updated_at: string;
-  active_card_image_url: string | null;
-  industry_id: number | null;
-  ownership_scope: string;
+export interface AvatarTrainingSummary {
+  status: string;
+  training_attempt_count: number;
+  training_error_code?: string | null;
+  training_started_at?: string | null;
+  training_completed_at?: string | null;
 }
 
-export interface AvatarDeployment {
+export interface AvatarFieldLock {
+  id: number;
+  field_path: string;
+  is_locked: boolean;
+}
+
+export interface AvatarCardModel {
   id: number;
   name: string | null;
   age: number | null;
-  role_paragraph: string | null;
   description: string | null;
-  backstory: string | null;
-  communication_principles: string | null;
-  industry_id: number | null;
+  role_paragraph: string | null;
   active_card_image_url: string | null;
-  build_state: string;
-  is_public: boolean;
-  ownership_scope: string;
-  source_type: string;
+  build_state: AvatarBuildState;
+  deployment_summary: AvatarDeploymentSummary | null;
+  ownership_scope: "personal" | "org" | string;
+  source_type: "original" | "clone" | string;
   source_avatar_id: number | null;
+  is_public: boolean;
   clone_count: number;
-  created_at: string;
   updated_at: string;
+  training_summary: AvatarTrainingSummary | null;
+}
+
+export interface AvatarDetailModel extends AvatarCardModel {
+  owner_id: string;
+  org_id: number | null;
+  backstory: string | null;
+  communication_principles: string[];
+  industry_id: number | null;
+  created_at: string;
+  field_locks: AvatarFieldLock[];
+  personality_payload: Record<string, unknown> | null;
+}
+
+export interface AvatarsHubResponse {
+  continue_creation: AvatarCardModel[];
+  my_avatars: AvatarCardModel[];
+  org_avatars: AvatarCardModel[];
+}
+
+export interface AvatarsAllResponse {
+  avatars: AvatarCardModel[];
+  total: number;
 }
 
 export interface ExploreAvatar {
@@ -45,9 +81,16 @@ export interface ExploreAvatar {
   role_paragraph: string | null;
   active_card_image_url: string | null;
   industry: AvatarIndustry | null;
+  creator_name: string | null;
   clone_count: number;
   is_public: boolean;
   created_at: string;
+}
+
+export interface ExploreResponse {
+  avatars: ExploreAvatar[];
+  next_cursor: string | null;
+  has_more: boolean;
 }
 
 export interface Attachment {
@@ -59,4 +102,8 @@ export interface Attachment {
   created_at: string;
 }
 
-export type AvatarCard = AvatarDraft | AvatarDeployment;
+export interface BindingActionResponse {
+  avatar_id: number;
+  deployment_summary: AvatarDeploymentSummary;
+  updated_automation_ids: number[];
+}

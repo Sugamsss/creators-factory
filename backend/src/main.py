@@ -1,16 +1,19 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
 from src.core.config import get_settings
 from src.core.database import init_db, AsyncSessionLocal
+from src.core.security import AuthHTTPException
 from src.modules.auth.router import router as auth_router
 from src.modules.avatars.router import router as avatars_router
 from src.modules.industries.router import router as industries_router
 from src.modules.automations.router import router as automations_router
+from src.modules.recycle_bin.router import router as recycle_bin_router
 from src.modules.industries.models import Industry
 from src.modules.users.models import User
 from src.modules.organizations.models import Organization
@@ -18,6 +21,10 @@ from src.modules.avatars.models import (
     Avatar,
     VisualVersion,
     ReferenceSlot,
+    AvatarVisualProfile,
+    AvatarPersonalitySnapshot,
+    AvatarReactionAsset,
+    AvatarFieldLock,
     AvatarAttachment,
 )
 from src.modules.automations.models import AutomationBinding
@@ -29,6 +36,10 @@ _ = [
     Avatar,
     VisualVersion,
     ReferenceSlot,
+    AvatarVisualProfile,
+    AvatarPersonalitySnapshot,
+    AvatarReactionAsset,
+    AvatarFieldLock,
     AvatarAttachment,
     AutomationBinding,
     Industry,
@@ -52,6 +63,14 @@ app = FastAPI(
     debug=settings.DEBUG,
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(AuthHTTPException)
+async def auth_exception_handler(_request: Request, exc: AuthHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "code": exc.code},
+    )
 
 # CORS
 app.add_middleware(
@@ -97,4 +116,7 @@ app.include_router(avatars_router, prefix="/api/v1/avatars", tags=["avatars"])
 app.include_router(industries_router, prefix="/api/v1/industries", tags=["industries"])
 app.include_router(
     automations_router, prefix="/api/v1/automations", tags=["automations"]
+)
+app.include_router(
+    recycle_bin_router, prefix="/api/v1/recycle-bin", tags=["recycle-bin"]
 )

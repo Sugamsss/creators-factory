@@ -8,42 +8,39 @@ import {
   deleteAttachment,
   editBaseImage,
   generateBaseImage,
+  getAvatar,
   getAttachments,
   getVisualVersions,
   setActiveBase,
+  type VisualVersion,
 } from "@/features/avatars/services/avatarApi";
 import type { Attachment } from "@/features/avatars/types";
-
-interface VisualVersion {
-  id: number;
-  version_number: number;
-  image_url: string;
-  prompt: string;
-  model_used: string;
-  aspect_ratio: string;
-  is_active_base: boolean;
-  is_edit: boolean;
-}
 
 interface VisualIdentityStepProps {
   avatarId: string;
 }
 
+type AspectRatio = "1:1" | "3:4" | "4:3" | "9:16" | "16:9";
+
 const MODEL_MAPPING = {
   "ChatGPT": "openai_image_1_5",
   "Nano Banana": "google_nano_banana_2",
-  "Seedream": "seedream_v5"
+  "Seedream v5 Lite": "seedream_v5"
 } as const;
 
 const REVERSE_MODEL_MAPPING: Record<string, string> = {
   "openai_image_1_5": "ChatGPT",
   "google_nano_banana_2": "Nano Banana",
-  "seedream_v5": "Seedream"
+  "seedream_v5": "Seedream v5 Lite"
 };
+const SUPPORTED_ASPECT_RATIOS: AspectRatio[] = ["1:1", "3:4", "9:16", "4:3", "16:9"];
+
+const isAspectRatio = (value: string): value is AspectRatio =>
+  SUPPORTED_ASPECT_RATIOS.includes(value as AspectRatio);
 
 export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
-  const [activeAspect, setActiveAspect] = useState("16:9");
-  const [activeModel, setActiveModel] = useState("Seedream");
+  const [activeAspect, setActiveAspect] = useState<AspectRatio>("16:9");
+  const [activeModel, setActiveModel] = useState("Seedream v5 Lite");
   const [age, setAge] = useState<string>("");
   const [prompt, setPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -51,9 +48,10 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
   const [activeVersionId, setActiveVersionId] = useState<number | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [workflowMode, setWorkflowMode] = useState<'generate' | 'edit'>('generate');
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [maskHistory, setMaskHistory] = useState<string[]>([]);
+  const [maskFuture, setMaskFuture] = useState<string[]>([]);
   
   // Canvas & Transformation State
   const [scale, setScale] = useState(1);
@@ -76,7 +74,9 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
       if (data.length > 0) {
         const active = data.find((v: VisualVersion) => v.is_active_base) || data[0];
         setActiveVersionId(active.id);
-        setActiveAspect(active.aspect_ratio);
+        if (isAspectRatio(active.aspect_ratio)) {
+          setActiveAspect(active.aspect_ratio);
+        }
         setActiveModel(REVERSE_MODEL_MAPPING[active.model_used] || active.model_used);
       }
     } catch (error) {
@@ -84,15 +84,21 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
     }
   }, [avatarId]);
 
+  const fetchAvatarBasics = useCallback(async () => {
+    try {
+      const avatar = await getAvatar(Number(avatarId));
+      if (avatar.age) {
+        setAge(String(avatar.age));
+      }
+    } catch (loadError) {
+      console.error("Failed to fetch avatar basics:", loadError);
+    }
+  }, [avatarId]);
+
   const fetchAttachmentData = useCallback(async () => {
     try {
       const data = await getAttachments(avatarId);
       setAttachments(data);
-      if (data.length > 0) {
-        setWorkflowMode("edit");
-      } else {
-        setWorkflowMode("generate");
-      }
     } catch (loadError) {
       console.error("Failed to fetch attachments:", loadError);
     }
@@ -101,7 +107,8 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
   useEffect(() => {
     void fetchVersions();
     void fetchAttachmentData();
-  }, [fetchAttachmentData, fetchVersions]);
+    void fetchAvatarBasics();
+  }, [fetchAttachmentData, fetchAvatarBasics, fetchVersions]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -121,13 +128,66 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
     return () => window.removeEventListener('resize', resizeCanvas);
   }, [brushMode, activeVersionId, activeAspect]);
 
-  const clearMask = () => {
+  const clearMask = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-  };
+  }, []);
+
+  useEffect(() => {
+    clearMask();
+    setMaskHistory([]);
+    setMaskFuture([]);
+  }, [activeVersionId, activeAspect, clearMask]);
+
+  const captureMaskSnapshot = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    setMaskHistory((previous) => [...previous, canvas.toDataURL("image/png")]);
+    setMaskFuture([]);
+  }, []);
+
+  const applyMaskSnapshot = useCallback((snapshot: string) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const image = new window.Image();
+    image.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    };
+    image.src = snapshot;
+  }, []);
+
+  const undoMask = useCallback(() => {
+    setMaskHistory((previous) => {
+      if (previous.length === 0) return previous;
+      const canvas = canvasRef.current;
+      if (!canvas) return previous;
+      const currentSnapshot = canvas.toDataURL("image/png");
+      const nextHistory = previous.slice(0, -1);
+      const targetSnapshot = previous[previous.length - 1];
+      setMaskFuture((future) => [currentSnapshot, ...future]);
+      applyMaskSnapshot(targetSnapshot);
+      return nextHistory;
+    });
+  }, [applyMaskSnapshot]);
+
+  const redoMask = useCallback(() => {
+    setMaskFuture((future) => {
+      if (future.length === 0) return future;
+      const canvas = canvasRef.current;
+      if (!canvas) return future;
+      const currentSnapshot = canvas.toDataURL("image/png");
+      const [targetSnapshot, ...remaining] = future;
+      setMaskHistory((history) => [...history, currentSnapshot]);
+      applyMaskSnapshot(targetSnapshot);
+      return remaining;
+    });
+  }, [applyMaskSnapshot]);
 
   const getMaskBase64 = () => {
     const canvas = canvasRef.current;
@@ -148,40 +208,58 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
 
   const handleSend = async () => {
     if (!prompt.trim() || isGenerating) return;
+    const parsedAge = Number(age);
+    if (!Number.isInteger(parsedAge) || parsedAge < 1 || parsedAge > 120) {
+      setError("Age is required and must be a whole number between 1 and 120.");
+      return;
+    }
 
     setIsGenerating(true);
     setError(null);
     abortControllerRef.current = new AbortController();
 
     try {
-      const isEditMode = (attachments.length > 0 || !!activeVersion) && workflowMode === 'edit';
+      const isEditMode = attachments.length > 0 || !!activeVersion;
       const maskData = getMaskBase64();
       const selectedModel =
         MODEL_MAPPING[activeModel as keyof typeof MODEL_MAPPING] || "seedream_v5";
+      if (maskData && selectedModel !== "openai_image_1_5") {
+        setError("Mask editing is only supported for ChatGPT Image.");
+        setIsGenerating(false);
+        abortControllerRef.current = null;
+        return;
+      }
+      const orderedReferenceImages: string[] = [];
+      if (activeVersion) {
+        orderedReferenceImages.push(activeVersion.image_url);
+      }
+      orderedReferenceImages.push(...attachments.map((attachment) => attachment.url));
       
       const payload = isEditMode
         ? {
             prompt,
             model: selectedModel,
             aspect_ratio: activeAspect,
-            age: age ? parseInt(age, 10) : null,
-            reference_image_url: attachments[0]?.url || activeVersion?.image_url || null,
+            age: parsedAge,
+            reference_image_urls: orderedReferenceImages,
             mask_image_url: maskData
           }
         : {
             prompt,
             model: selectedModel,
             aspect_ratio: activeAspect,
-            age: age ? parseInt(age, 10) : null,
+            age: parsedAge,
           };
 
       const data = isEditMode
-        ? await editBaseImage(avatarId, payload)
-        : await generateBaseImage(avatarId, payload);
+        ? await editBaseImage(avatarId, payload, abortControllerRef.current.signal)
+        : await generateBaseImage(avatarId, payload, abortControllerRef.current.signal);
       if (data) {
         await fetchVersions();
         setActiveVersionId(data.version_id);
         clearMask();
+        setMaskHistory([]);
+        setMaskFuture([]);
         setBrushMode(null); // Exit inpainting mode after successful edit
       }
     } catch (error) {
@@ -210,7 +288,6 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
       for (const file of imageFiles) {
         const attachment = await attachImage(avatarId, file);
         setAttachments(prev => [...prev, attachment]);
-        setWorkflowMode('edit');
       }
     } catch (error) {
       console.error("Failed to upload files:", error);
@@ -225,11 +302,7 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
       await deleteAttachment(avatarId, attachmentId);
       
       setAttachments(prev => {
-        const newAttachments = prev.filter(a => a.id !== attachmentId);
-        if (newAttachments.length === 0) {
-          setWorkflowMode('generate');
-        }
-        return newAttachments;
+        return prev.filter(a => a.id !== attachmentId);
       });
     } catch (error) {
       console.error("Failed to remove attachment:", error);
@@ -279,13 +352,15 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
         }
         break;
       case 'delete':
+        captureMaskSnapshot();
         clearMask();
         setBrushMode(null);
-        setScale(1);
-        setOffset({ x: 0, y: 0 });
         break;
-      case 'attach':
-        setWorkflowMode('edit');
+      case 'undo':
+        undoMask();
+        break;
+      case 'redo':
+        redoMask();
         break;
     }
   };
@@ -295,6 +370,7 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
       setIsPanning(true);
       setLastMousePos({ x: e.clientX, y: e.clientY });
     } else if (brushMode === 'brush' || brushMode === 'eraser') {
+      captureMaskSnapshot();
       setIsDrawing(true);
       draw(e);
     }
@@ -331,7 +407,7 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
     ctx.lineWidth = 20;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#3c9f95';
+    ctx.strokeStyle = '#ef4444';
     ctx.globalCompositeOperation = brushMode === 'eraser' ? 'destination-out' : 'source-over';
 
     ctx.lineTo(x, y);
@@ -356,6 +432,9 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
     }
     return 'default';
   };
+
+  const parsedAge = Number(age);
+  const isAgeValid = Number.isInteger(parsedAge) && parsedAge >= 1 && parsedAge <= 120;
 
   return (
     <div 
@@ -409,16 +488,20 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
             { icon: "pan_tool", label: "Pan", action: "pan", active: brushMode === 'pan' },
             { icon: "brush", label: "Brush", action: "brush", active: brushMode === 'brush' },
             { icon: "ink_eraser", label: "Eraser", action: "ink_eraser", active: brushMode === 'eraser' },
+            { icon: "undo", label: "Undo Mask", action: "undo", disabled: maskHistory.length === 0 },
+            { icon: "redo", label: "Redo Mask", action: "redo", disabled: maskFuture.length === 0 },
             { icon: "add", label: "Zoom In", action: "add" },
             { icon: "remove", label: "Zoom Out", action: "remove" },
             { icon: "download", label: "Download", action: "download" },
-            { icon: "delete", label: "Reset Canvas", action: "delete" },
+            { icon: "layers_clear", label: "Clear Mask", action: "delete" },
           ].map((tool) => (
             <button
               key={tool.label}
               title={tool.label}
+              aria-label={tool.label}
+              aria-pressed={Boolean(tool.active)}
               onClick={() => handleToolAction(tool.action)}
-              disabled={tool.action === 'download' && !activeVersion}
+              disabled={Boolean(tool.disabled) || (tool.action === 'download' && !activeVersion)}
               className={`flex items-center justify-center rounded-full transition-all duration-200 disabled:opacity-30 disabled:hover:scale-100
                 ${tool.active 
                   ? 'bg-[#1a3a2a] text-white shadow-lg scale-110' 
@@ -446,7 +529,9 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
                       await setActiveBase(avatarId, v.id);
                       await fetchVersions();
                       setActiveVersionId(v.id);
-                      setActiveAspect(v.aspect_ratio);
+                      if (isAspectRatio(v.aspect_ratio)) {
+                        setActiveAspect(v.aspect_ratio);
+                      }
                       setError(null);
                     } catch (selectionError) {
                       setError(
@@ -619,22 +704,6 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
                       {brushMode === 'pan' ? 'Navigation Mode' : `Inpainting Mode: ${brushMode}`}
                     </div>
                   )}
-
-                  {/* Quick Attach Tooltip */}
-                  {workflowMode === 'generate' && versions.length > 0 && !isGenerating && (
-                    <motion.button
-                      initial={{ y: 20, opacity: 0 }}
-                      animate={{ y: 0, opacity: 1 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleToolAction('attach');
-                      }}
-                      className="absolute bottom-6 right-6 z-20 px-6 py-2.5 rounded-full bg-[#3c9f95] text-white text-[11px] font-bold uppercase tracking-widest shadow-2xl hover:bg-[#2d7a72] transition-colors flex items-center gap-2"
-                    >
-                      <span className="material-symbols-outlined !text-[14px]">attachment</span>
-                      Attach as Reference
-                    </motion.button>
-                  )}
                 </div>
               </motion.div>
             ) : (
@@ -689,7 +758,7 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
               ) : (
                 <button 
                   onClick={handleSend}
-                  disabled={!prompt.trim()}
+                  disabled={!prompt.trim() || !isAgeValid}
                   className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1a3a2a] text-white hover:bg-[#3c9f95] transition-all shadow-lg shadow-[#1a3a2a]/20 flex-shrink-0 disabled:opacity-30 disabled:grayscale"
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 20 }}>send</span>
@@ -762,7 +831,7 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
                 </button>
                 <div className="absolute bottom-full left-0 hidden group-hover:block pt-8 -mt-8 z-50">
                   <div className="mb-2 w-32 bg-white rounded-xl border border-[#e4ebe4] shadow-xl p-1">
-                  {["1:1", "3:4", "9:16", "4:3", "16:9"].map((ratio) => (
+                  {SUPPORTED_ASPECT_RATIOS.map((ratio) => (
                     <button 
                       key={ratio}
                       onClick={() => setActiveAspect(ratio)}
@@ -792,7 +861,7 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
                 </button>
                 <div className="absolute bottom-full left-0 hidden group-hover:block pt-8 -mt-8 z-50">
                   <div className="mb-2 w-40 bg-white rounded-xl border border-[#e4ebe4] shadow-xl p-1">
-                  {["ChatGPT", "Nano Banana", "Seedream"].map((model) => (
+                  {["ChatGPT", "Nano Banana", "Seedream v5 Lite"].map((model) => (
                     <button 
                       key={model}
                       onClick={() => setActiveModel(model)}
@@ -811,10 +880,12 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
               <div className="flex items-center gap-2 px-3 h-8 rounded-xl bg-[#f4f7f5]">
                 <span className="material-symbols-outlined text-[#8ca1c5]" style={{ fontSize: 18 }}>person</span>
                 <input 
-                  type="text" 
+                  type="number" 
                   placeholder="Age"
                   value={age}
                   onChange={(e) => setAge(e.target.value)}
+                  min={1}
+                  max={120}
                   disabled={isGenerating}
                   className="w-12 bg-transparent border-none outline-none focus:outline-none focus:ring-0 text-[10px] font-bold tracking-wider text-[#1a3a2a] placeholder:text-[#8ca1c5] disabled:opacity-50"
                 />

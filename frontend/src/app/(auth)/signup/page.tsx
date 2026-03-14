@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { useAuth, getAuthRedirect, clearAuthRedirect } from "@/features/auth";
+import { getPostLoginPath, useAuth } from "@/features/auth";
 
 export default function SignupPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -18,11 +19,10 @@ export default function SignupPage() {
   useEffect(() => {
     if (isAuthLoading) return;
     if (isAuthenticated) {
-      const redirectUrl = getAuthRedirect() || "/avatars";
-      clearAuthRedirect();
+      const redirectUrl = getPostLoginPath(searchParams);
       router.push(redirectUrl);
     }
-  }, [isAuthenticated, isAuthLoading, router]);
+  }, [isAuthenticated, isAuthLoading, router, searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,8 +31,7 @@ export default function SignupPage() {
 
     try {
       await signup(name, email, password);
-      const redirectUrl = getAuthRedirect() || "/avatars";
-      clearAuthRedirect();
+      const redirectUrl = getPostLoginPath(searchParams);
       router.push(redirectUrl);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Signup failed");
@@ -102,7 +101,7 @@ export default function SignupPage() {
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Create a strong password"
             required
-            minLength={6}
+            minLength={8}
             className="w-full rounded-2xl border border-[#d6dbd4] bg-white/50 px-5 py-4 text-sm font-medium text-[#1a3a2a] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#3c9f95]/20 transition-all placeholder:text-[#8ca1c5]"
           />
         </div>

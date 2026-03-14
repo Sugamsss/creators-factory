@@ -1,18 +1,16 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import {
+  AUTH_COOKIE_NAME,
+  getMiddlewareRedirectPath,
+} from "@/features/auth/lib/session-routing";
 
 export function middleware(request: NextRequest) {
-  const token = request.cookies.get("auth_token")?.value;
-  const isAuthPage = request.nextUrl.pathname === "/login" || request.nextUrl.pathname === "/signup";
-
-  // If not authenticated and trying to access protected routes
-  if (!token && !isAuthPage && request.nextUrl.pathname !== "/") {
-    return NextResponse.redirect(new URL("/login", request.url));
-  }
-
-  // If authenticated and trying to access auth pages, redirect to dashboard
-  if (token && isAuthPage) {
-    return NextResponse.redirect(new URL("/avatars", request.url));
+  const { pathname, search } = request.nextUrl;
+  const hasAccessCookie = Boolean(request.cookies.get(AUTH_COOKIE_NAME)?.value);
+  const loginPath = getMiddlewareRedirectPath(pathname, search, hasAccessCookie);
+  if (loginPath) {
+    return NextResponse.redirect(new URL(loginPath, request.url));
   }
 
   return NextResponse.next();

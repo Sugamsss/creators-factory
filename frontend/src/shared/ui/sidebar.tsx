@@ -10,7 +10,7 @@ import { StaggerContainer, StaggerItem, transitions } from "./animations";
 const navItems = [
   { href: "/dashboard", icon: "grid_view", label: "Dashboard" },
   { href: "/avatars", icon: "face", label: "Avatars" },
-  { href: "/industries", icon: "business_center", label: "Industries" },
+  { href: "/industries", icon: "category", label: "Industries" },
   { href: "/scripts", icon: "article", label: "Scripts" },
   { href: "/videos", icon: "play_circle", label: "Videos" },
   { href: "/automations", icon: "bolt", label: "Automations" },

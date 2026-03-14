@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
-import { motion } from "framer-motion";
-import { getAvatar, updateAvatar } from "@/features/avatars/services/avatarApi";
+import { useCallback, useEffect, useState } from "react";
+import { getAvatar, getIndustries, updateAvatar } from "@/features/avatars/services/avatarApi";
+import type { AvatarIndustry } from "@/features/avatars/types";
 
 interface PersonalityStepProps {
   avatarId: string;
@@ -14,239 +14,252 @@ export function PersonalityStep({ avatarId }: PersonalityStepProps) {
     age: "",
     description: "",
     backstory: "",
+    communication_principles: "",
     industry_id: "",
     role_paragraph: "",
   });
+  const [industries, setIndustries] = useState<AvatarIndustry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
-  const fetchAvatar = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     try {
-      const data = await getAvatar(Number(avatarId));
+      const [avatar, industryData] = await Promise.all([
+        getAvatar(Number(avatarId)),
+        getIndustries(),
+      ]);
       setFormData({
-        name: data.name || "",
-        age: data.age?.toString() || "",
-        description: data.description || "",
-        backstory: data.backstory || "",
-        industry_id: data.industry_id?.toString() || "",
-        role_paragraph: data.role_paragraph || "",
+        name: avatar.name || "",
+        age: avatar.age?.toString() || "",
+        description: avatar.description || "",
+        backstory: avatar.backstory || "",
+        communication_principles: (avatar.communication_principles || []).join("\n"),
+        industry_id: avatar.industry_id?.toString() || "",
+        role_paragraph: avatar.role_paragraph || "",
       });
+      setIndustries(industryData);
     } catch (error) {
-      console.error("Failed to fetch avatar:", error);
+      console.error("Failed to fetch personality data:", error);
+      setMessage("Failed to load avatar personality data.");
     } finally {
       setIsLoading(false);
     }
   }, [avatarId]);
 
   useEffect(() => {
-    fetchAvatar();
-  }, [fetchAvatar]);
+    void fetchData();
+  }, [fetchData]);
 
-  const handleSave = async () => {
+  const save = async (completeAvatar: boolean = false) => {
     setIsSaving(true);
+    setMessage(null);
     try {
       await updateAvatar(Number(avatarId), {
-        ...formData,
+        name: formData.name || undefined,
         age: formData.age ? parseInt(formData.age, 10) : null,
-        industry_id: formData.industry_id
-          ? parseInt(formData.industry_id, 10)
-          : null,
+        description: formData.description || undefined,
+        backstory: formData.backstory || undefined,
+        communication_principles: formData.communication_principles
+          .split("\n")
+          .map((item) => item.trim())
+          .filter(Boolean),
+        industry_id: formData.industry_id ? parseInt(formData.industry_id, 10) : null,
+        role_paragraph: formData.role_paragraph || undefined,
+        complete_avatar: completeAvatar,
       });
-      console.log("Avatar saved successfully");
+      setMessage(completeAvatar ? "Avatar completed successfully." : "Draft saved successfully.");
     } catch (error) {
       console.error("Failed to save avatar:", error);
+      setMessage(error instanceof Error ? error.message : "Failed to save avatar.");
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+  ) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setFormData((previous) => ({ ...previous, [name]: value }));
   };
 
   if (isLoading) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="w-10 h-10 border-2 border-[#3c9f95] border-t-transparent rounded-full animate-spin" />
+      <div className="flex h-full items-center justify-center">
+        <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#3c9f95] border-t-transparent" />
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col p-4 lg:p-6 overflow-y-auto scrollbar-none relative">
-      <div className="max-w-5xl mx-auto w-full space-y-10 pb-20">
+    <div className="relative h-full overflow-y-auto p-4 scrollbar-none lg:p-6">
+      <div className="mx-auto w-full max-w-5xl space-y-10 pb-20">
         <header className="flex items-center justify-between">
           <div className="space-y-2">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="mb-1 flex items-center gap-2">
               <span className="h-1.5 w-1.5 rounded-full bg-[#3c9f95]" />
-              <p className="text-[9px] font-bold uppercase tracking-[0.25em] text-[#3c9f95]">Stage 03: Cognition</p>
+              <p className="text-[9px] font-bold uppercase tracking-[0.25em] text-[#3c9f95]">Stage 03: Personality</p>
             </div>
-            <h3 className="font-display text-3xl lg:text-4xl text-[#1a3a2a]">Defining Personality</h3>
-            <p className="text-[12px] text-[#5c6d66] max-w-xl leading-relaxed font-medium">
-              Define the soul of your avatar: their history, role, and voice.
+            <h3 className="font-display text-3xl text-[#1a3a2a] lg:text-4xl">Define Personality</h3>
+            <p className="max-w-xl text-[12px] font-medium leading-relaxed text-[#5c6d66]">
+              Save draft anytime or complete avatar once all required fields are valid.
             </p>
           </div>
-          <button 
-            onClick={handleSave}
-            disabled={isSaving}
-            className="flex items-center gap-2 px-6 h-11 rounded-xl bg-[#1a3a2a] text-white text-[10px] font-bold uppercase tracking-widest hover:bg-[#3c9f95] transition-all disabled:opacity-50"
-          >
-            {isSaving ? "Saving..." : "Save Identity"}
-            <span className="material-symbols-outlined !text-[16px]">save</span>
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => void save(false)}
+              disabled={isSaving}
+              className="h-11 rounded-xl bg-[#1a3a2a] px-6 text-[10px] font-bold uppercase tracking-widest text-white transition-all hover:bg-[#3c9f95] disabled:opacity-50"
+            >
+              {isSaving ? "Saving..." : "Save Draft"}
+            </button>
+            <button
+              onClick={() => void save(true)}
+              disabled={isSaving}
+              className="h-11 rounded-xl bg-[#3c9f95] px-6 text-[10px] font-bold uppercase tracking-widest text-white transition-all hover:bg-[#2b7a72] disabled:opacity-50"
+            >
+              Complete Avatar
+            </button>
+          </div>
         </header>
 
-        {/* Identity Section */}
-        <section className="bg-white rounded-[32px] border border-[#d6dbd4] p-8 shadow-xl shadow-black/5">
-          <div className="flex items-start justify-between mb-8">
+        {message && (
+          <div className="rounded-xl border border-[#d6dbd4] bg-white p-4 text-sm text-[#1a3a2a]">
+            {message}
+          </div>
+        )}
+
+        <section className="rounded-[32px] border border-[#d6dbd4] bg-white p-8 shadow-xl shadow-black/5">
+          <div className="mb-8 flex items-start justify-between">
             <div className="flex items-center gap-3">
-              <span className="h-10 w-10 rounded-xl bg-[#3c9f95]/10 text-[#3c9f95] flex items-center justify-center">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#3c9f95]/10 text-[#3c9f95]">
                 <span className="material-symbols-outlined !text-[20px]">id_card</span>
               </span>
               <div>
-                <h4 className="font-display text-xl text-[#1a3a2a]">Core Identity</h4>
-                <p className="text-[10px] font-bold text-[#8ca1c5] uppercase tracking-widest mt-0.5">Basic info and origin story</p>
+                <h4 className="font-display text-xl text-[#1a3a2a]">Core Information</h4>
+                <p className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-[#8ca1c5]">Required fields</p>
               </div>
             </div>
           </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-            <div className="space-y-3">
-              <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a] ml-1">Full Identity Name</label>
-              <input 
-                type="text" 
+
+          <div className="mb-6 grid grid-cols-1 gap-6 md:grid-cols-2">
+            <label className="space-y-2">
+              <span className="ml-1 text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a]">Name</span>
+              <input
+                type="text"
                 name="name"
                 value={formData.name}
                 onChange={handleChange}
-                placeholder="E.G. JULIAN VANCE" 
-                className="w-full rounded-[24px] border border-[#d6dbd4] bg-[#fafcfb] px-6 py-5 text-[14px] font-semibold text-[#1a3a2a] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#3c9f95]/20 transition-all placeholder:text-[#8ca1c5]"
+                className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-sm"
               />
-            </div>
-            <div className="space-y-3">
-              <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a] ml-1">Perceived Chronological Age</label>
-              <input 
-                type="number" 
+            </label>
+            <label className="space-y-2">
+              <span className="ml-1 text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a]">Age</span>
+              <input
+                type="number"
                 name="age"
                 value={formData.age}
                 onChange={handleChange}
-                placeholder="E.G. 32" 
-                className="w-full rounded-[24px] border border-[#d6dbd4] bg-[#fafcfb] px-6 py-5 text-[14px] font-semibold text-[#1a3a2a] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#3c9f95]/20 transition-all placeholder:text-[#8ca1c5]"
+                className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-sm"
               />
-            </div>
+            </label>
           </div>
 
-          <div className="space-y-3">
-            <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a] ml-1">Comprehensive Backstory</label>
-            <textarea 
+          <label className="mb-6 block space-y-2">
+            <span className="ml-1 text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a]">Description</span>
+            <textarea
+              name="description"
+              rows={3}
+              value={formData.description}
+              onChange={handleChange}
+              className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-sm"
+            />
+          </label>
+
+          <label className="mb-6 block space-y-2">
+            <span className="ml-1 text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a]">Backstory</span>
+            <textarea
               name="backstory"
+              rows={5}
               value={formData.backstory}
               onChange={handleChange}
-              rows={5}
-              placeholder="WEAVE A TALE OF THEIR EXPERIENCES, THEIR VALUES, AND THE MOTIVATIONS THAT DRIVE THEM..." 
-              className="w-full rounded-[32px] border border-[#d6dbd4] bg-[#fafcfb] px-6 py-6 text-[14px] font-semibold text-[#1a3a2a] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#3c9f95]/20 transition-all resize-none leading-relaxed placeholder:text-[#8ca1c5]"
+              className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-sm"
             />
-          </div>
+          </label>
+
+          <label className="block space-y-2">
+            <span className="ml-1 text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a]">
+              Communication Principles (one per line)
+            </span>
+            <textarea
+              name="communication_principles"
+              rows={4}
+              value={formData.communication_principles}
+              onChange={handleChange}
+              className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-sm"
+            />
+          </label>
         </section>
 
-        {/* Industry & Role */}
-        <section className="bg-white rounded-[32px] border border-[#d6dbd4] p-8 shadow-xl shadow-black/5">
-          <div className="flex items-start justify-between mb-8">
-            <div className="flex items-center gap-3">
-              <span className="h-10 w-10 rounded-xl bg-[#3c9f95]/10 text-[#3c9f95] flex items-center justify-center">
-                <span className="material-symbols-outlined !text-[20px]">work</span>
-              </span>
-              <div>
-                <h4 className="font-display text-xl text-[#1a3a2a]">Industrial Context</h4>
-                <p className="text-[10px] font-bold text-[#8ca1c5] uppercase tracking-widest mt-0.5">Professional positioning</p>
-              </div>
+        <section className="rounded-[32px] border border-[#d6dbd4] bg-white p-8 shadow-xl shadow-black/5">
+          <div className="mb-6 flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#3c9f95]/10 text-[#3c9f95]">
+              <span className="material-symbols-outlined !text-[20px]">work</span>
+            </span>
+            <div>
+              <h4 className="font-display text-xl text-[#1a3a2a]">Industry and Role</h4>
+              <p className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-[#8ca1c5]">Required to complete</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a] ml-1">Target Industry</label>
-              <select 
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <label className="space-y-2">
+              <span className="ml-1 text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a]">Industry</span>
+              <select
                 name="industry_id"
                 value={formData.industry_id}
                 onChange={handleChange}
-                className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-[13px] font-semibold text-[#1a3a2a] appearance-none cursor-pointer"
+                className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-sm"
               >
-                <option value="">Select Industry...</option>
-                <option value="1">Education</option>
-                <option value="2">Finance</option>
-                <option value="3">Health & Wellness</option>
-                <option value="4">Technology</option>
-                <option value="5">Lifestyle</option>
-                <option value="6">Business</option>
-                <option value="7">Marketing</option>
-                <option value="8">Customer Support</option>
+                <option value="">Select industry...</option>
+                {industries.map((industry) => (
+                  <option key={industry.id} value={industry.id}>
+                    {industry.name}
+                  </option>
+                ))}
               </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a] ml-1">Functional Role</label>
-              <input 
+            </label>
+
+            <label className="space-y-2">
+              <span className="ml-1 text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a]">Role</span>
+              <input
                 type="text"
                 name="role_paragraph"
                 value={formData.role_paragraph}
                 onChange={handleChange}
-                placeholder="E.G. System Architect"
-                className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-[13px] font-semibold text-[#1a3a2a] focus:bg-white focus:outline-none"
+                className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-sm"
               />
-            </div>
+            </label>
           </div>
         </section>
 
-        {/* Voice Grid (Still semi-mocked but UI ready) */}
         <section>
-          <div className="flex items-center justify-between mb-8">
-            <div className="flex items-center gap-3">
-              <span className="h-10 w-10 rounded-xl bg-[#3c9f95]/10 text-[#3c9f95] flex items-center justify-center">
-                <span className="material-symbols-outlined !text-[20px]">record_voice_over</span>
-              </span>
-              <div>
-                <h4 className="font-display text-xl text-[#1a3a2a]">Vocal Signature</h4>
-                <p className="text-[10px] font-bold text-[#8ca1c5] uppercase tracking-widest mt-0.5">Select a voice</p>
-              </div>
+          <div className="mb-4 flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#3c9f95]/10 text-[#3c9f95]">
+              <span className="material-symbols-outlined !text-[20px]">record_voice_over</span>
+            </span>
+            <div>
+              <h4 className="font-display text-xl text-[#1a3a2a]">Voice and Tone</h4>
+              <p className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-[#8ca1c5]">
+                Continue in edit page for full controls
+              </p>
             </div>
-            <button className="text-[9px] font-bold uppercase tracking-[0.2em] text-[#3c9f95] border border-[#3c9f95]/20 px-5 py-2 rounded-full hover:bg-[#3c9f95] hover:text-white transition-all">
-              Custom Voice
-            </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {[
-              { name: "Serene Professional", archetype: "Calm, Mature", accent: "RP British", color: "#3c9f95" },
-              { name: "Dynamic Innovator", archetype: "High Energy", accent: "Standard American", color: "#4a9e8a" },
-              { name: "Trusted Advisor", archetype: "Empathetic, Soft", accent: "Australian", color: "#2f7a68" },
-              { name: "Commanding Leader", archetype: "Authoritative", accent: "Transatlantic", color: "#1a3a2a" },
-              { name: "Creative Visionary", archetype: "Playful, Airy", accent: "Midwestern", color: "#6bb8a3" },
-              { name: "Technical Expert", archetype: "Precise, Clear", accent: "Singaporean", color: "#2d5a45" },
-            ].map((voice, idx) => (
-              <motion.div 
-                key={voice.name}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.05 }}
-                className="bg-white border border-[#d6dbd4] rounded-[32px] p-6 hover:border-[#3c9f95] transition-all cursor-pointer group shadow-sm hover:shadow-2xl hover:shadow-[#3c9f95]/5 relative overflow-hidden"
-              >
-                <div className="flex items-start justify-between mb-6">
-                  <div className="h-12 w-12 rounded-full bg-[#f4f7f5] flex items-center justify-center text-[#3c9f95] group-hover:bg-[#1a3a2a] group-hover:text-white transition-all shadow-inner">
-                    <span className="material-symbols-outlined !text-[24px]">play_circle</span>
-                  </div>
-                  <div className="h-6 w-6 rounded-full border-2 border-[#d6dbd4] group-hover:border-[#3c9f95] flex items-center justify-center transition-colors">
-                    <div className="h-2.5 w-2.5 rounded-full bg-[#3c9f95] opacity-0 group-hover:opacity-100 transition-opacity" />
-                  </div>
-                </div>
-                <div>
-                  <h5 className="text-[15px] font-bold text-[#1a3a2a] mb-1">{voice.name}</h5>
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    <span className="text-[9px] font-bold uppercase tracking-wider bg-[#f4f7f5] text-[#5c6d66] px-2.5 py-1 rounded-md">{voice.archetype}</span>
-                    <span className="text-[9px] font-bold uppercase tracking-wider bg-[#f4f7f5] text-[#5c6d66] px-2.5 py-1 rounded-md">{voice.accent}</span>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
+          <div className="rounded-2xl border border-[#d6dbd4] bg-white p-5 text-sm text-[#5c6d66]">
+            Voice mode, reactions, tone tags, and advanced personality controls are preserved in payload snapshots and can be
+            expanded in subsequent passes.
           </div>
         </section>
       </div>

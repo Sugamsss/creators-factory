@@ -68,7 +68,7 @@ This is the actionable build board for the Avatars page.
 | FE-023 | Complete Explore feed behavior with real filters, tabs, and pagination/scroll    | done        | FE-008, BE-007                                 | Explore functional UI       |
 | FE-024 | Implement clone action UI and post-clone navigation behavior                     | done        | FE-023, BE-018                                 | clone UX                    |
 | FE-025 | Implement clone edit mode with read-only locked fields                           | done        | FE-015, BE-019                                 | lock-aware editing          |
-| FE-026 | Build `/avatars/all` filters, sorting, and list rendering                        | not_started | FE-002, BE-007                                 | inventory page behavior     |
+| FE-026 | Build `/avatars/all` filters, sorting, and list rendering                        | done        | FE-002, BE-007                                 | inventory page behavior     |
 | FE-027 | Build Use automation picker                                                      | done        | FE-004, BE-020                                 | deploy UI                   |
 | FE-028 | Build replace-binding warning flow                                               | done        | FE-027, BE-021                                 | safe deploy conflict UX     |
 | FE-029 | Build Pause flow with single-binding shortcut and multi-binding picker           | done        | FE-004, BE-022                                 | pause UX                    |

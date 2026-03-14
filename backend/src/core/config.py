@@ -3,6 +3,9 @@ from functools import lru_cache
 import json
 from typing import List
 
+AUTH_ACCESS_COOKIE_NAME = "auth_token"
+AUTH_REFRESH_COOKIE_NAME = "refresh_token"
+
 
 class Settings(BaseSettings):
     APP_NAME: str = "Creator Studio"
@@ -18,8 +21,6 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    ACCESS_COOKIE_NAME: str = "auth_token"
-    REFRESH_COOKIE_NAME: str = "refresh_token"
     COOKIE_SECURE: bool = False
     COOKIE_SAMESITE: str = "lax"
     COOKIE_DOMAIN: str | None = None
@@ -60,6 +61,13 @@ class Settings(BaseSettings):
         # Validate required fields
         if not self.SECRET_KEY:
             raise ValueError("SECRET_KEY environment variable is required")
+
+        normalized_samesite = self.COOKIE_SAMESITE.strip().lower()
+        if normalized_samesite not in {"lax", "strict", "none"}:
+            raise ValueError("COOKIE_SAMESITE must be one of: lax, strict, none")
+        if normalized_samesite == "none" and not self.COOKIE_SECURE:
+            raise ValueError("COOKIE_SAMESITE=none requires COOKIE_SECURE=true")
+        self.COOKIE_SAMESITE = normalized_samesite
 
 
 @lru_cache

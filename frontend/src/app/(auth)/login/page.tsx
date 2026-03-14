@@ -2,12 +2,13 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { useAuth, getAuthRedirect, clearAuthRedirect } from "@/features/auth";
+import { getPostLoginPath, useAuth } from "@/features/auth";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -17,11 +18,10 @@ export default function LoginPage() {
   useEffect(() => {
     if (isAuthLoading) return;
     if (isAuthenticated) {
-      const redirectUrl = getAuthRedirect() || "/avatars";
-      clearAuthRedirect();
+      const redirectUrl = getPostLoginPath(searchParams);
       router.push(redirectUrl);
     }
-  }, [isAuthenticated, isAuthLoading, router]);
+  }, [isAuthenticated, isAuthLoading, router, searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,8 +30,7 @@ export default function LoginPage() {
 
     try {
       await login(email, password);
-      const redirectUrl = getAuthRedirect() || "/avatars";
-      clearAuthRedirect();
+      const redirectUrl = getPostLoginPath(searchParams);
       router.push(redirectUrl);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");

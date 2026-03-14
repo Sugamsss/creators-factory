@@ -42,20 +42,27 @@ def test_fal_service_mock():
 
 def test_endpoint_schemas():
     from src.modules.avatars.schemas import GenerateBaseRequest
+    from pydantic import ValidationError
 
     req1 = GenerateBaseRequest(
         prompt="young woman", age=28, model="seedream_v5", aspect_ratio="16:9"
     )
     assert req1.age == 28
 
-    req2 = GenerateBaseRequest(prompt="young woman", model="seedream_v5")
-    assert req2.age is None
+    try:
+        GenerateBaseRequest(prompt="young woman", model="seedream_v5")
+        raise AssertionError("GenerateBaseRequest should require age")
+    except ValidationError:
+        pass
 
 
 def test_aspect_ratio_mapping():
     assert ASPECT_RATIO_MAP["openai_image_1_5"]["1:1"] == "1024x1024"
+    assert ASPECT_RATIO_MAP["openai_image_1_5"]["3:4"] == "1024x1536"
+    assert ASPECT_RATIO_MAP["openai_image_1_5"]["4:3"] == "1536x1024"
     assert ASPECT_RATIO_MAP["openai_image_1_5"]["16:9"] == "1536x1024"
     assert ASPECT_RATIO_MAP["google_nano_banana_2"]["1:1"] == "1:1"
+    assert ASPECT_RATIO_MAP["google_nano_banana_2"]["3:4"] == "3:4"
     assert ASPECT_RATIO_MAP["google_nano_banana_2"]["9:16"] == "9:16"
     assert ASPECT_RATIO_MAP["seedream_v5"]["*"] == "auto_3K"
 

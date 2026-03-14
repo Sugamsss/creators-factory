@@ -7,8 +7,8 @@ import { useRouter } from "next/navigation";
 import { VisualIdentityStep } from "./VisualIdentityStep";
 import { FinalizeAppearanceStep } from "./FinalizeAppearanceStep";
 import { PersonalityStep } from "./PersonalityStep";
-import { setAuthRedirect, useAuth } from "@/features/auth";
-import { createAvatar, getAvatar, updateAvatar } from "@/features/avatars/services/avatarApi";
+import { buildLoginPath, useAuth } from "@/features/auth";
+import { createAvatarDraft, getAvatar, updateAvatar } from "@/features/avatars/services/avatarApi";
 
 interface CreationWorkspaceProps {
   draftId: string;
@@ -32,8 +32,7 @@ export function CreationWorkspace({ draftId }: CreationWorkspaceProps) {
     if (isAuthLoading) return;
 
     if (!isAuthenticated) {
-      setAuthRedirect(`/avatars/create/${draftId}`);
-      router.push("/login");
+      router.push(buildLoginPath(`/avatars/create/${draftId}`));
     } else {
       setIsAuthChecked(true);
     }
@@ -45,15 +44,14 @@ export function CreationWorkspace({ draftId }: CreationWorkspaceProps) {
     if (draftId === "new") {
       // Create a new avatar draft
       setIsCreating(true);
-      void createAvatar()
+      void createAvatarDraft()
         .then(draft => {
           // Redirect to the actual draft page
           router.replace(`/avatars/create/${draft.id}`);
         })
         .catch(err => {
           console.error("Failed to create avatar:", err);
-          setAuthRedirect(`/avatars/create/${draftId}`);
-          router.push("/login");
+          router.push(buildLoginPath(`/avatars/create/${draftId}`));
         })
         .finally(() => setIsCreating(false));
     } else if (!Number.isNaN(Number(draftId))) {

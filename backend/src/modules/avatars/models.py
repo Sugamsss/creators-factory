@@ -32,6 +32,22 @@ class AvatarDeploymentSummary(str, enum.Enum):
     FULLY_PAUSED = "fully_paused"
 
 
+class AvatarTrainingStatus(str, enum.Enum):
+    NOT_STARTED = "not_started"
+    QUEUED = "queued"
+    RUNNING = "running"
+    RETRYING = "retrying"
+    FAILED = "failed"
+    COMPLETED = "completed"
+
+
+class AvatarReactionStatus(str, enum.Enum):
+    PENDING = "pending"
+    GENERATING = "generating"
+    READY = "ready"
+    FAILED = "failed"
+
+
 class Avatar(Base):  # type: ignore[misc]
     __tablename__ = "avatars"
 
@@ -39,39 +55,30 @@ class Avatar(Base):  # type: ignore[misc]
     owner_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     org_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
 
-    # Ownership and source
     ownership_scope = Column(String, default="personal")  # personal | org
     source_type = Column(String, default="original")  # original | clone
     source_avatar_id = Column(Integer, ForeignKey("avatars.id"), nullable=True)
 
-    # Visual profile
     visual_profile_snapshot_id = Column(Integer, nullable=True)
 
-    # Build state
     build_state: Column[AvatarBuildState] = Column(
         SQLEnum(AvatarBuildState), default=AvatarBuildState.DRAFT_VISUAL, index=True
     )
 
-    # Core info
     name = Column(String(40), nullable=True)
     age = Column(Integer, nullable=True)
     description = Column(Text, nullable=True)
 
-    # Identity
     backstory = Column(Text, nullable=True)
-    communication_principles = Column(Text, nullable=True)  # JSON array
+    communication_principles = Column(Text, nullable=True)  # JSON array string
 
-    # Industry & Role
     industry_id = Column(Integer, ForeignKey("industries.id"), nullable=True)
     role_paragraph = Column(Text, nullable=True)
 
-    # Visual
     active_card_image_url = Column(String, nullable=True)
 
-    # Clone tracking
     clone_count = Column(Integer, default=0)
 
-    # Metadata
     is_public = Column(Boolean, default=False, index=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     hard_delete_at = Column(DateTime(timezone=True), nullable=True)
@@ -81,7 +88,6 @@ class Avatar(Base):  # type: ignore[misc]
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    # Relationships
     owner = relationship("User", back_populates="avatars")
     industry = relationship("Industry", back_populates="avatars")
     org = relationship("Organization", back_populates="avatars")
@@ -96,6 +102,23 @@ class Avatar(Base):  # type: ignore[misc]
     )
     attachments = relationship(
         "AvatarAttachment", back_populates="avatar", cascade="all, delete-orphan"
+    )
+    visual_profile = relationship(
+        "AvatarVisualProfile",
+        back_populates="avatar",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    personality_snapshots = relationship(
+        "AvatarPersonalitySnapshot",
+        back_populates="avatar",
+        cascade="all, delete-orphan",
+    )
+    reaction_assets = relationship(
+        "AvatarReactionAsset", back_populates="avatar", cascade="all, delete-orphan"
+    )
+    field_locks = relationship(
+        "AvatarFieldLock", back_populates="avatar", cascade="all, delete-orphan"
     )
 
 
@@ -147,6 +170,67 @@ class ReferenceSlot(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     avatar = relationship("Avatar", back_populates="reference_slots")
+
+
+class AvatarVisualProfile(Base):
+    __tablename__ = "avatar_visual_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    avatar_id = Column(Integer, ForeignKey("avatars.id"), nullable=False, index=True)
+    lora_model_id = Column(String, nullable=True)
+    training_status: Column[AvatarTrainingStatus] = Column(
+        SQLEnum(AvatarTrainingStatus),
+        default=AvatarTrainingStatus.NOT_STARTED,
+        nullable=False,
+    )
+    training_attempt_count = Column(Integer, default=0, nullable=False)
+    training_started_at = Column(DateTime(timezone=True), nullable=True)
+    training_completed_at = Column(DateTime(timezone=True), nullable=True)
+    training_error_code = Column(String, nullable=True)
+
+    avatar = relationship("Avatar", back_populates="visual_profile")
+
+
+class AvatarPersonalitySnapshot(Base):
+    __tablename__ = "avatar_personality_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    avatar_id = Column(Integer, ForeignKey("avatars.id"), nullable=False, index=True)
+    version_number = Column(Integer, nullable=False)
+    payload_json = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    avatar = relationship("Avatar", back_populates="personality_snapshots")
+
+
+class AvatarReactionAsset(Base):
+    __tablename__ = "avatar_reaction_assets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    avatar_id = Column(Integer, ForeignKey("avatars.id"), nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    usage_intent = Column(Text, nullable=True)
+    hook_description = Column(Text, nullable=True)
+    generation_prompt = Column(Text, nullable=True)
+    status: Column[AvatarReactionStatus] = Column(
+        SQLEnum(AvatarReactionStatus), default=AvatarReactionStatus.PENDING, nullable=False
+    )
+    clip_url = Column(String, nullable=True)
+    is_predefined = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    avatar = relationship("Avatar", back_populates="reaction_assets")
+
+
+class AvatarFieldLock(Base):
+    __tablename__ = "avatar_field_locks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    avatar_id = Column(Integer, ForeignKey("avatars.id"), nullable=False, index=True)
+    field_path = Column(String(200), nullable=False)
+    is_locked = Column(Boolean, default=True, nullable=False)
+
+    avatar = relationship("Avatar", back_populates="field_locks")
 
 
 class AvatarAttachment(Base):

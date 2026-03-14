@@ -1,4 +1,9 @@
-import { apiRequest } from "@/shared/lib/api-client";
+import {
+  API_BASE_PATH,
+  ApiError,
+  parseAuthErrorResponse,
+  apiRequest,
+} from "@/shared/lib/api-client";
 
 export interface AuthUser {
   id: string;
@@ -28,7 +33,7 @@ export async function login(
   formData.append("username", credentials.email);
   formData.append("password", credentials.password);
 
-  const response = await fetch("/api/v1/auth/login", {
+  const response = await fetch(`${API_BASE_PATH}/auth/login`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -38,14 +43,15 @@ export async function login(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "Login failed" }));
-    throw new Error(error.detail || "Login failed");
+    const parsed = await parseAuthErrorResponse(response);
+    throw new ApiError(parsed.message || "Login failed", response.status, parsed.code);
   }
+
   return response.json();
 }
 
 export async function signup(data: SignupData): Promise<AuthSessionResponse> {
-  const response = await fetch("/api/v1/auth/signup", {
+  const response = await fetch(`${API_BASE_PATH}/auth/signup`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -55,9 +61,10 @@ export async function signup(data: SignupData): Promise<AuthSessionResponse> {
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "Signup failed" }));
-    throw new Error(error.detail || "Signup failed");
+    const parsed = await parseAuthErrorResponse(response);
+    throw new ApiError(parsed.message || "Signup failed", response.status, parsed.code);
   }
+
   return response.json();
 }
 
@@ -67,21 +74,4 @@ export async function getCurrentUser(): Promise<AuthUser> {
 
 export async function logout(): Promise<void> {
   await apiRequest("/auth/logout", { method: "POST" });
-}
-
-const AUTH_REDIRECT_KEY = "auth_redirect_url";
-
-export function setAuthRedirect(url: string): void {
-  if (typeof window === "undefined") return;
-  sessionStorage.setItem(AUTH_REDIRECT_KEY, url);
-}
-
-export function getAuthRedirect(): string | null {
-  if (typeof window === "undefined") return null;
-  return sessionStorage.getItem(AUTH_REDIRECT_KEY);
-}
-
-export function clearAuthRedirect(): void {
-  if (typeof window === "undefined") return;
-  sessionStorage.removeItem(AUTH_REDIRECT_KEY);
 }

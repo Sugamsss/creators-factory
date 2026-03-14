@@ -25,6 +25,9 @@ export interface AvatarCardProps {
   tertiaryActionLabel?: string;
   tertiaryActionIcon?: string;
   onTertiaryAction?: () => void;
+  quaternaryActionLabel?: string;
+  quaternaryActionIcon?: string;
+  onQuaternaryAction?: () => void;
   className?: string;
 }
 
@@ -47,6 +50,9 @@ export function AvatarCard({
   tertiaryActionLabel,
   tertiaryActionIcon,
   onTertiaryAction,
+  quaternaryActionLabel,
+  quaternaryActionIcon,
+  onQuaternaryAction,
   className,
 }: AvatarCardProps) {
   const getStatusColor = () => {
@@ -187,6 +193,7 @@ export function AvatarCard({
           )}
           {renderButton(secondaryActionLabel, secondaryActionIcon, onSecondaryAction, false)}
           {renderButton(tertiaryActionLabel, tertiaryActionIcon, onTertiaryAction, false)}
+          {renderButton(quaternaryActionLabel, quaternaryActionIcon, onQuaternaryAction, false)}
         </div>
       </div>
     </HoverCard>

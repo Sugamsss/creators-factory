@@ -83,7 +83,7 @@ modules/avatars/
 | State | TanStack Query + Zustand |
 | Backend | FastAPI, SQLAlchemy 2.0 (async) |
 | Database | PostgreSQL |
-| Auth | JWT with refresh tokens |
+| Auth | HttpOnly cookie-session JWT (access + refresh rotation) |
 
 ## Getting Started
 
@@ -142,6 +142,15 @@ All components use glass morphism:
 - `glass-card` - Card components with backdrop blur
 
 ## API Endpoints
+
+### Auth (Cookie-Session Only)
+- `POST /api/v1/auth/signup` - Create user and issue `auth_token` + `refresh_token` cookies
+- `POST /api/v1/auth/login` - Authenticate and issue `auth_token` + `refresh_token` cookies
+- `GET /api/v1/auth/me` - Return current authenticated user from access cookie
+- `POST /api/v1/auth/refresh` - Rotate session cookies from refresh cookie
+- `POST /api/v1/auth/logout` - Idempotently clear auth cookies
+
+Auth transport in the browser is same-origin only (`/api/v1/*` via Next.js rewrite), and all authenticated requests must include cookies (`credentials: "include"`). Bearer/localStorage auth is intentionally unsupported.
 
 ### Avatars
 - `GET /api/v1/avatars` - List user avatars
