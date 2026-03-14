@@ -3,7 +3,8 @@ import { CreationWorkspace } from "@/features/avatars/components/creation/Creati
 export default async function CreateAvatarPage({
   params,
 }: {
-  params: { draftId: string };
+  params: Promise<{ draftId: string }>;
 }) {
-  return <CreationWorkspace draftId={params.draftId} />;
+  const { draftId } = await params;
+  return <CreationWorkspace draftId={draftId} />;
 }

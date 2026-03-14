@@ -1,141 +1,194 @@
-import * as React from "react";
+"use client";
+
 import Image from "next/image";
-import { cn } from "@/shared/lib/utils";
-import { Badge } from "./badge";
 import { motion } from "framer-motion";
-import { transitions } from "./animations";
+import { HoverCard } from "@/shared/ui/animations";
+import { cn } from "@/shared/lib/utils";
 
 export interface AvatarCardProps {
-  name: string;
-  age?: number;
+  id: string | number;
+  title: string;
+  image: string;
+  status?: string;
+  statusTone?: "amber" | "red" | "green" | "blue";
+  modified?: string;
   role?: string;
-  description?: string;
-  imageUrl?: string;
-  badges?: Array<{ label: string; variant?: "primary" | "success" | "warning" | "default" }>;
-  onConfigure?: () => void;
-  onDeploy?: () => void;
+  isTraining?: boolean;
+  isActive?: boolean;
+  type: "draft" | "deployment";
+  actionLabel?: string;
+  actionIcon?: string;
+  onAction?: () => void;
+  secondaryActionLabel?: string;
+  secondaryActionIcon?: string;
+  onSecondaryAction?: () => void;
+  tertiaryActionLabel?: string;
+  tertiaryActionIcon?: string;
+  onTertiaryAction?: () => void;
   className?: string;
 }
 
 export function AvatarCard({
-  name,
-  age,
+  title,
+  image,
+  status,
+  statusTone = "blue",
+  modified,
   role,
-  description,
-  imageUrl,
-  badges = [],
-  onConfigure,
-  onDeploy,
+  isTraining,
+  isActive,
+  type,
+  actionLabel,
+  actionIcon,
+  onAction,
+  secondaryActionLabel,
+  secondaryActionIcon,
+  onSecondaryAction,
+  tertiaryActionLabel,
+  tertiaryActionIcon,
+  onTertiaryAction,
   className,
 }: AvatarCardProps) {
+  const getStatusColor = () => {
+    switch (statusTone) {
+      case "amber":
+        return "text-[#a16207] bg-[#fefce8]";
+      case "red":
+        return "text-[#ef3a32] bg-[#fef2f2]";
+      case "green":
+        return "text-[#10b981] bg-[#ecfdf5]";
+      case "blue":
+      default:
+        return "text-[#3c9f95] bg-[#f0fdfa]";
+    }
+  };
+
+  const renderButton = (
+    label?: string,
+    icon?: string,
+    onClick?: () => void,
+    isPrimary = true,
+    disabled = false
+  ) => {
+    if (!label || !onClick) return null;
+    
+    return (
+      <motion.button
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        disabled={disabled}
+        whileHover={{ scale: 1.02, y: -2 }}
+        whileTap={{ scale: 0.98 }}
+        className={cn(
+          "flex-1 flex items-center justify-center gap-2 rounded-xl py-3 text-[10px] font-bold uppercase tracking-[0.2em] shadow-md transition-all duration-300",
+          isPrimary
+            ? "bg-[#1c2120] text-white hover:bg-[#2c3332] hover:shadow-lg"
+            : "bg-white border border-gray-200 text-[#1c2120] hover:border-[#3c9f95] hover:text-[#3c9f95]",
+          disabled && "opacity-50 cursor-not-allowed"
+        )}
+      >
+        {icon && <span className={cn("material-symbols-outlined !text-[16px]", isPrimary ? "text-[#3c9f95]" : "text-[#3c9f95]")}>{icon}</span>}
+        {label}
+      </motion.button>
+    );
+  };
+
   return (
-    <motion.div
-      whileHover={{ y: -8 }}
-      transition={transitions.gentle}
-      className={cn(
-        "glass-card rounded-3xl overflow-hidden group cursor-pointer",
-        "min-h-[450px] flex flex-col shadow-[0_4px_20px_-10px_rgba(0,0,0,0.1)] hover:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.2)]",
-        className
-      )}
-    >
-      {/* Image container */}
-      <div className="relative h-72 overflow-hidden">
-        {imageUrl ? (
-          <motion.div
-            whileHover={{ scale: 1.05 }}
-            transition={transitions.smooth}
-            className="w-full h-full"
-          >
-            <Image
-              src={imageUrl}
-              alt={name}
-              fill
-              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-              className="object-cover"
-              priority
-            />
-          </motion.div>
+    <HoverCard className={cn(
+      "group w-[240px] min-w-[240px] overflow-hidden rounded-[24px] bg-white shadow-md transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl",
+      className
+    )}>
+      {/* Image Container - Tall Portrait */}
+      <div className="relative h-[320px] overflow-hidden">
+        {image ? (
+          <Image
+            src={image}
+            alt={title}
+            fill
+            className="object-cover transition-transform duration-500 group-hover:scale-110"
+          />
         ) : (
-          <div className="w-full h-full bg-surface-200 dark:bg-surface-800 flex items-center justify-center">
-            <span className="material-symbols-outlined text-6xl text-surface-400">
-              face
-            </span>
+          <div className="w-full h-full bg-slate-100 flex items-center justify-center">
+            <span className="material-symbols-outlined text-6xl text-slate-300">face</span>
           </div>
         )}
         
-        {/* Gradient overlay - matches screenshot exactly */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-80 group-hover:opacity-90 transition-opacity duration-300" />
-        
-        {/* Badges positioned at top left */}
-        {badges.length > 0 && (
-          <div className="absolute top-4 left-4 flex gap-2 z-10">
-            {badges.map((badge, index) => (
-              <Badge key={index} variant={badge.variant || "default"}>
-                {badge.label}
-              </Badge>
-            ))}
-          </div>
-        )}
-        
-        {/* Avatar info in overlay */}
-        <div className="absolute bottom-6 left-6 right-6 z-10">
-          <motion.h3 
-            layoutId={`avatar-name-${name}`}
-            className="font-display text-3xl text-white leading-tight"
-          >
-            {name}
-            {age && (
-              <span className="opacity-60 text-xl font-sans font-light ml-2">
-                {age}
-              </span>
-            )}
-          </motion.h3>
-          {role && (
-            <p className="text-white/60 text-[10px] font-medium tracking-[0.2em] uppercase mt-1.5">
-              {role}
+        {/* Overlays */}
+        <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/60 to-transparent" />
+
+        {/* Training Overlay */}
+        {isTraining && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/20 backdrop-blur-[2px] z-10">
+            <motion.span
+              animate={{ rotate: 360 }}
+              transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+              className="material-symbols-outlined !text-[32px] text-white"
+            >
+              autorenew
+            </motion.span>
+            <p className="mt-2 text-[11px] font-bold uppercase tracking-[0.2em] text-white">
+              Identity Synthesis
             </p>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* Status Badge */}
+        {status && (
+          <div className={`absolute left-4 top-4 rounded-full px-3 py-1 text-[9px] font-bold uppercase tracking-[0.12em] shadow-sm z-20 ${getStatusColor()}`}>
+            {status}
+          </div>
+        )}
+
+        {/* Active Pulse Badge */}
+        {isActive && (
+          <div className="absolute right-4 top-4 flex items-center gap-1.5 rounded-full bg-[#3c9f95] px-3 py-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white shadow-lg z-20">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75"></span>
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-white"></span>
+            </span>
+            Active
+          </div>
+        )}
+
+        {/* Role Overlay (for deployment) */}
+        {type === "deployment" && !isTraining && (
+          <div className="absolute inset-x-0 bottom-4 px-4 text-white">
+            <p className="text-[10px] font-medium uppercase tracking-widest opacity-80">
+              {role || "Primary Support"}
+            </p>
+          </div>
+        )}
       </div>
 
-      {/* Description and Actions */}
-      <div className="p-8 flex-1 flex flex-col">
-        {description && (
-          <p className="text-sm text-surface-600 dark:text-surface-400 leading-relaxed font-light flex-1">
-            {description}
-          </p>
-        )}
-        
-        {/* Actions */}
-        <div className="mt-6 flex gap-3">
-          {onConfigure && (
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onConfigure();
-              }}
-              className="flex-1 py-3 text-[10px] font-bold tracking-widest bg-primary/10 text-primary rounded-xl hover:bg-primary hover:text-white transition-all duration-200 uppercase"
-            >
-              Configure
-            </motion.button>
-          )}
-          {onDeploy && (
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onDeploy();
-              }}
-              className="flex-1 py-3 text-[10px] font-bold tracking-widest border border-surface-200 dark:border-white/10 rounded-xl hover:bg-white/20 dark:hover:bg-white/10 transition-all duration-200 uppercase"
-            >
-              Deploy
-            </motion.button>
+      {/* Content Area */}
+      <div className="px-5 pb-6 pt-5">
+        <div className="flex flex-col gap-1">
+          <h3 className="font-display text-[18px] font-bold leading-tight text-[#1c2120] line-clamp-1">
+            {title}
+          </h3>
+          {modified && (
+            <div className="flex items-center gap-1.5">
+              <span className="material-symbols-outlined !text-[14px] text-[#8da1bf]">history</span>
+              <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#8da1bf]">
+                {modified}
+              </p>
+            </div>
           )}
         </div>
+
+        <div className="mt-5 flex gap-2">
+          {renderButton(
+            actionLabel || (type === "draft" ? "Continue" : "View Details"),
+            actionIcon || (type === "draft" ? "play_arrow" : "visibility"),
+            onAction,
+            true
+          )}
+          {renderButton(secondaryActionLabel, secondaryActionIcon, onSecondaryAction, false)}
+          {renderButton(tertiaryActionLabel, tertiaryActionIcon, onTertiaryAction, false)}
+        </div>
       </div>
-    </motion.div>
+    </HoverCard>
   );
 }

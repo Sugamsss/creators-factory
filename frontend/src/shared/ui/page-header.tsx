@@ -4,7 +4,7 @@ import * as React from "react";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "./button";
 
-interface PageHeaderProps {
+export interface PageHeaderProps {
   title: string;
   subtitle?: string;
   action?: {

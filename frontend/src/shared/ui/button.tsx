@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { cn } from "@/shared/lib/utils";
-import { motion } from "framer-motion";
 
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -27,14 +26,13 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     };
 
     return (
-      <motion.button
+      <button
         ref={ref}
-        whileTap={{ scale: 0.98 }}
-        whileHover={{ scale: 1.01 }}
         className={cn(
           "inline-flex items-center justify-center gap-1.5 font-medium transition-all duration-200 ease-out",
           "disabled:opacity-50 disabled:cursor-not-allowed",
           "focus:outline-none focus:ring-2 focus:ring-primary/30",
+          "active:scale-[0.98] hover:scale-[1.01]",
           variants[variant],
           sizes[size],
           className
@@ -49,7 +47,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
           </svg>
         )}
         <span className="relative flex items-center gap-1.5">{children}</span>
-      </motion.button>
+      </button>
     );
   }
 );

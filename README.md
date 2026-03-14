@@ -145,7 +145,8 @@ All components use glass morphism:
 
 ### Avatars
 - `GET /api/v1/avatars` - List user avatars
-- `POST /api/v1/avatars` - Create avatar
+- `POST /api/v1/avatars/drafts` - Create avatar draft (canonical)
+- `POST /api/v1/avatars` - Create avatar draft (legacy alias)
 - `GET /api/v1/avatars/:id` - Get avatar
 - `PATCH /api/v1/avatars/:id` - Update avatar
 - `DELETE /api/v1/avatars/:id` - Delete avatar

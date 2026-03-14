@@ -34,6 +34,34 @@ const config: Config = {
           light: "#6bb8a3",
           dark: "#2f7a68",
         },
+        brand: {
+          DEFAULT: "#3c9f95",
+          light: "#90d5c8",
+          hover: "#2f9488",
+        },
+        ink: {
+          DEFAULT: "#1c2120",
+          heavy: "#1f3027",
+          muted: "#233529",
+        },
+        muted: {
+          DEFAULT: "#8ca1c5",
+          soft: "#5c6d66",
+        },
+        border: {
+          DEFAULT: "#d6dbd4",
+        },
+        tint: {
+          green: "#ecfdf5",
+          amber: "#fefce8",
+          red: "#fef2f2",
+          brand: "#f0fdfa",
+        },
+        status: {
+          success: "#10b981",
+          warning: "#a16207",
+          error: "#ef4444",
+        },
         surface: {
           50: "#fafcfb",
           100: "#f4f7f5",
@@ -50,7 +78,6 @@ const config: Config = {
           light: "#f4f7f5",
           dark: "#0f1a18",
         },
-        // Exact colors from screenshots
         sidebar: "#1a3a2a",
       },
       fontFamily: {

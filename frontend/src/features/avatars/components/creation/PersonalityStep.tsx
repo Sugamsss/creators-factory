@@ -1,21 +1,100 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
+import { getAvatar, updateAvatar } from "@/features/avatars/services/avatarApi";
 
-export function PersonalityStep() {
+interface PersonalityStepProps {
+  avatarId: string;
+}
+
+export function PersonalityStep({ avatarId }: PersonalityStepProps) {
+  const [formData, setFormData] = useState({
+    name: "",
+    age: "",
+    description: "",
+    backstory: "",
+    industry_id: "",
+    role_paragraph: "",
+  });
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const fetchAvatar = useCallback(async () => {
+    try {
+      const data = await getAvatar(Number(avatarId));
+      setFormData({
+        name: data.name || "",
+        age: data.age?.toString() || "",
+        description: data.description || "",
+        backstory: data.backstory || "",
+        industry_id: data.industry_id?.toString() || "",
+        role_paragraph: data.role_paragraph || "",
+      });
+    } catch (error) {
+      console.error("Failed to fetch avatar:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [avatarId]);
+
+  useEffect(() => {
+    fetchAvatar();
+  }, [fetchAvatar]);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await updateAvatar(Number(avatarId), {
+        ...formData,
+        age: formData.age ? parseInt(formData.age, 10) : null,
+        industry_id: formData.industry_id
+          ? parseInt(formData.industry_id, 10)
+          : null,
+      });
+      console.log("Avatar saved successfully");
+    } catch (error) {
+      console.error("Failed to save avatar:", error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  if (isLoading) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="w-10 h-10 border-2 border-[#3c9f95] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   return (
-    <div className="h-full flex flex-col p-4 lg:p-6 overflow-y-auto scrollbar-none">
+    <div className="h-full flex flex-col p-4 lg:p-6 overflow-y-auto scrollbar-none relative">
       <div className="max-w-5xl mx-auto w-full space-y-10 pb-20">
-        <header className="space-y-2">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#3c9f95]" />
-            <p className="text-[9px] font-bold uppercase tracking-[0.25em] text-[#3c9f95]">Stage 03: Cognition</p>
+        <header className="flex items-center justify-between">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#3c9f95]" />
+              <p className="text-[9px] font-bold uppercase tracking-[0.25em] text-[#3c9f95]">Stage 03: Cognition</p>
+            </div>
+            <h3 className="font-display text-3xl lg:text-4xl text-[#1a3a2a]">Defining Personality</h3>
+            <p className="text-[12px] text-[#5c6d66] max-w-xl leading-relaxed font-medium">
+              Define the soul of your avatar: their history, role, and voice.
+            </p>
           </div>
-          <h3 className="font-display text-3xl lg:text-4xl text-[#1a3a2a]">Defining Personality</h3>
-          <p className="text-[12px] text-[#5c6d66] max-w-xl leading-relaxed font-medium">
-            Define the soul of your avatar: their history, role, and voice.
-          </p>
+          <button 
+            onClick={handleSave}
+            disabled={isSaving}
+            className="flex items-center gap-2 px-6 h-11 rounded-xl bg-[#1a3a2a] text-white text-[10px] font-bold uppercase tracking-widest hover:bg-[#3c9f95] transition-all disabled:opacity-50"
+          >
+            {isSaving ? "Saving..." : "Save Identity"}
+            <span className="material-symbols-outlined !text-[16px]">save</span>
+          </button>
         </header>
 
         {/* Identity Section */}
@@ -37,6 +116,9 @@ export function PersonalityStep() {
               <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a] ml-1">Full Identity Name</label>
               <input 
                 type="text" 
+                name="name"
+                value={formData.name}
+                onChange={handleChange}
                 placeholder="E.G. JULIAN VANCE" 
                 className="w-full rounded-[24px] border border-[#d6dbd4] bg-[#fafcfb] px-6 py-5 text-[14px] font-semibold text-[#1a3a2a] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#3c9f95]/20 transition-all placeholder:text-[#8ca1c5]"
               />
@@ -45,6 +127,9 @@ export function PersonalityStep() {
               <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a] ml-1">Perceived Chronological Age</label>
               <input 
                 type="number" 
+                name="age"
+                value={formData.age}
+                onChange={handleChange}
                 placeholder="E.G. 32" 
                 className="w-full rounded-[24px] border border-[#d6dbd4] bg-[#fafcfb] px-6 py-5 text-[14px] font-semibold text-[#1a3a2a] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#3c9f95]/20 transition-all placeholder:text-[#8ca1c5]"
               />
@@ -54,6 +139,9 @@ export function PersonalityStep() {
           <div className="space-y-3">
             <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a] ml-1">Comprehensive Backstory</label>
             <textarea 
+              name="backstory"
+              value={formData.backstory}
+              onChange={handleChange}
               rows={5}
               placeholder="WEAVE A TALE OF THEIR EXPERIENCES, THEIR VALUES, AND THE MOTIVATIONS THAT DRIVE THEM..." 
               className="w-full rounded-[32px] border border-[#d6dbd4] bg-[#fafcfb] px-6 py-6 text-[14px] font-semibold text-[#1a3a2a] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#3c9f95]/20 transition-all resize-none leading-relaxed placeholder:text-[#8ca1c5]"
@@ -78,27 +166,38 @@ export function PersonalityStep() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a] ml-1">Target Industry</label>
-              <select className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-[13px] font-semibold text-[#1a3a2a] appearance-none cursor-pointer">
-                <option>Select Industry...</option>
-                <option>Technology & SaaS</option>
-                <option>Luxury Healthcare</option>
-                <option>Corporate Finance</option>
-                <option>Creative Arts</option>
+              <select 
+                name="industry_id"
+                value={formData.industry_id}
+                onChange={handleChange}
+                className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-[13px] font-semibold text-[#1a3a2a] appearance-none cursor-pointer"
+              >
+                <option value="">Select Industry...</option>
+                <option value="1">Education</option>
+                <option value="2">Finance</option>
+                <option value="3">Health & Wellness</option>
+                <option value="4">Technology</option>
+                <option value="5">Lifestyle</option>
+                <option value="6">Business</option>
+                <option value="7">Marketing</option>
+                <option value="8">Customer Support</option>
               </select>
             </div>
             <div className="space-y-2">
               <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a] ml-1">Functional Role</label>
-              <select className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-[13px] font-semibold text-[#1a3a2a] appearance-none cursor-pointer">
-                <option>Select Role...</option>
-                <option>System Architect</option>
-                <option>Global Sales Ambassador</option>
-                <option>Technical Specialist</option>
-              </select>
+              <input 
+                type="text"
+                name="role_paragraph"
+                value={formData.role_paragraph}
+                onChange={handleChange}
+                placeholder="E.G. System Architect"
+                className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-[13px] font-semibold text-[#1a3a2a] focus:bg-white focus:outline-none"
+              />
             </div>
           </div>
         </section>
 
-        {/* Voice Grid */}
+        {/* Voice Grid (Still semi-mocked but UI ready) */}
         <section>
           <div className="flex items-center justify-between mb-8">
             <div className="flex items-center gap-3">
@@ -145,13 +244,6 @@ export function PersonalityStep() {
                     <span className="text-[9px] font-bold uppercase tracking-wider bg-[#f4f7f5] text-[#5c6d66] px-2.5 py-1 rounded-md">{voice.archetype}</span>
                     <span className="text-[9px] font-bold uppercase tracking-wider bg-[#f4f7f5] text-[#5c6d66] px-2.5 py-1 rounded-md">{voice.accent}</span>
                   </div>
-                </div>
-                
-                {/* Visual equalizer bars decoration */}
-                <div className="absolute bottom-6 right-8 flex items-end gap-0.5 h-4 opacity-10 group-hover:opacity-100 transition-opacity">
-                  {[3, 7, 5, 8, 4].map((h, i) => (
-                    <div key={i} className="w-1 bg-[#3c9f95] rounded-full group-hover:animate-pulse" style={{ height: `${h * 10}%`, animationDelay: `${i * 0.1}s` }} />
-                  ))}
                 </div>
               </motion.div>
             ))}

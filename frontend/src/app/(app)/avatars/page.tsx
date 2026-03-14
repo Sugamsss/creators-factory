@@ -1,299 +1,385 @@
 "use client";
 
-import { motion } from "framer-motion";
-import Link from "next/link";
+import { useState, useCallback, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { StaggerContainer, StaggerItem, FadeIn } from "@/shared/ui/animations";
-import { AvatarCard } from "@/features/avatars/components/AvatarCard";
+import { StaggerContainer, StaggerItem } from "@/shared/ui/animations";
+import { AvatarCard } from "@/shared/ui";
+import { SearchBar } from "@/shared/ui/search-bar";
+import { IndustryDropdown } from "@/shared/ui/industry-dropdown";
+import { SortTabs } from "@/shared/ui/sort-tabs";
+import { PageContainer, PageHeader, SectionHeading } from "@/shared/ui/layout";
+import { LoadMoreButton } from "@/shared/ui/buttons";
+import { useAvatars } from "@/features/avatars/hooks";
+import { cloneAvatar, deleteAvatar, retryAvatarTraining } from "@/features/avatars/services/avatarApi";
+import { RemoveFromAutomationsModal } from "@/shared/ui/remove-from-automations-modal";
+import { useAuth, setAuthRedirect, getAuthRedirect, clearAuthRedirect } from "@/features/auth";
 
-const draftCards = [
-  {
-    id: 1,
-    title: "Draft Project 1",
-    modified: "Modified just now",
-    status: "Training Identity",
-    statusTone: "amber",
-    image: "https://images.unsplash.com/photo-1487412720507-e7ab37603c6f?w=900&h=1200&fit=crop",
-    isTraining: true,
-  },
-  {
-    id: 2,
-    title: "Draft Project 2",
-    modified: "Modified 1h ago",
-    status: "Synthesis Failed",
-    statusTone: "red",
-    image: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=900&h=1200&fit=crop",
-  },
-  {
-    id: 3,
-    title: "Draft Project 3",
-    modified: "Modified 2h ago",
-    status: "Training Identity",
-    statusTone: "amber",
-    image: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=900&h=1200&fit=crop",
-    isTraining: true,
-  },
-  {
-    id: 4,
-    title: "Draft Project 4",
-    modified: "Modified 3h ago",
-    status: "Synthesis Failed",
-    statusTone: "red",
-    image: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=900&h=1200&fit=crop",
-  },
-  {
-    id: 5,
-    title: "Draft Project 5",
-    modified: "Modified 4h ago",
-    status: "Training Identity",
-    statusTone: "amber",
-    image: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=900&h=1200&fit=crop",
-    isTraining: true,
-  },
-];
+function getStatusLabel(buildState: string): string {
+  const labels: Record<string, string> = {
+    draft_visual: "Visual Setup",
+    draft_appearance: "Appearance",
+    training_lora: "Training Identity",
+    failed_training: "Training Failed",
+    draft_personality: "Personality",
+    ready: "Ready",
+  };
+  return labels[buildState] || buildState;
+}
 
-const deploymentCards = [
-  {
-    id: 1,
-    title: "Sarah Jenkins",
-    image: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=900&h=1200&fit=crop",
-    role: "Brand Ambassador",
-    isActive: true,
-    modified: "Active now",
-  },
-  {
-    id: 2,
-    title: "Michael Chen",
-    image: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=900&h=1200&fit=crop",
-    role: "Tech Support Expert",
-    modified: "2 days ago",
-  },
-  {
-    id: 3,
-    title: "Elena Rodriguez",
-    image: "https://images.unsplash.com/photo-1542206395-9feb3edaa68d?w=900&h=1200&fit=crop",
-    role: "Customer Success",
-    modified: "1 week ago",
-  },
-  {
-    id: 4,
-    title: "David Wilson",
-    image: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=900&h=1200&fit=crop",
-    role: "Sales Executive",
-    modified: "3 weeks ago",
-  },
-  {
-    id: 5,
-    title: "Amai Nakamura",
-    image: "https://images.unsplash.com/photo-1525134479668-1bee5c7c6845?w=900&h=1200&fit=crop",
-    role: "Content Strategist",
-    modified: "1 month ago",
-  },
-];
+function getStatusTone(buildState: string): "amber" | "red" | "green" | "blue" {
+  if (buildState === "training_lora") return "amber";
+  if (buildState === "failed_training") return "red";
+  if (buildState === "ready") return "green";
+  return "blue";
+}
+
+function formatDate(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 60) return `Modified ${diffMins}m ago`;
+  if (diffHours < 24) return `Modified ${diffHours}h ago`;
+  if (diffDays < 7) return `Modified ${diffDays}d ago`;
+  return date.toLocaleDateString();
+}
 
 export default function AvatarsPage() {
   const router = useRouter();
+  const { isAuthenticated, isLoading: isAuthLoading } = useAuth();
+  const { 
+    drafts, 
+    deployments, 
+    orgAvatars,
+    exploreAvatars,
+    industries,
+    isLoading,
+    isLoadingMore,
+    hasMoreExplore,
+    triggerCreateAvatar, 
+    loadMoreExplore,
+    fetchExploreWithParams,
+  } = useAvatars();
 
-  const handleCreateNew = () => {
-    router.push("/avatars/create/new-avatar");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedIndustry, setSelectedIndustry] = useState<number | undefined>();
+  const [sortBy, setSortBy] = useState<"featured" | "popular" | "newest">("newest");
+  const [, startTransition] = useTransition();
+  const [cloningId, setCloningId] = useState<number | null>(null);
+  const [cloneError, setCloneError] = useState<string | null>(null);
+  const [cloneSuccess, setCloneSuccess] = useState<number | null>(null);
+  const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [showRemoveModal, setShowRemoveModal] = useState<{ id: number; name: string } | null>(null);
+
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchQuery(value);
+    startTransition(() => {
+      fetchExploreWithParams({
+        search: value || undefined,
+        industryId: selectedIndustry,
+        sort: sortBy,
+      }, true);
+    });
+  }, [fetchExploreWithParams, selectedIndustry, sortBy]);
+
+  const handleIndustryChange = useCallback((industryId: number | undefined) => {
+    setSelectedIndustry(industryId);
+    startTransition(() => {
+      fetchExploreWithParams({
+        search: searchQuery || undefined,
+        industryId: industryId,
+        sort: sortBy,
+      }, true);
+    });
+  }, [fetchExploreWithParams, searchQuery, sortBy]);
+
+  const handleSortChange = useCallback((sort: "featured" | "popular" | "newest") => {
+    setSortBy(sort);
+    startTransition(() => {
+      fetchExploreWithParams({
+        search: searchQuery || undefined,
+        industryId: selectedIndustry,
+        sort: sort,
+      }, true);
+    });
+  }, [fetchExploreWithParams, searchQuery, selectedIndustry]);
+
+  useEffect(() => {
+    if (isAuthLoading || !isAuthenticated) return;
+    const redirectUrl = getAuthRedirect();
+    if (redirectUrl) {
+      clearAuthRedirect();
+      if (redirectUrl === "/avatars/create/new") {
+        // Create a new avatar draft and redirect to its creation page
+        setIsCreating(true);
+        triggerCreateAvatar()
+          .then((draftId) => {
+            router.push(`/avatars/create/${draftId}`);
+          })
+          .catch((err) => {
+            console.error("Failed to create avatar after login:", err);
+            // fallback to avatars list
+            router.push("/avatars");
+          })
+          .finally(() => {
+            setIsCreating(false);
+          });
+      } else {
+        router.push(redirectUrl);
+      }
+    }
+  }, [isAuthLoading, isAuthenticated, router, triggerCreateAvatar]);
+
+  const handleCreateNew = async () => {
+    if (!isAuthenticated) {
+      setAuthRedirect("/avatars/create/new");
+      router.push("/login");
+      return;
+    }
+
+    setIsCreating(true);
+    try {
+      const draftId = await triggerCreateAvatar();
+      clearAuthRedirect();
+      router.push(`/avatars/create/${draftId}`);
+    } catch (err) {
+      console.error("Create avatar error:", err);
+      if (err instanceof Error && err.message === "Session expired. Please log in again.") {
+        setAuthRedirect("/avatars/create/new");
+        router.push("/login");
+      } else {
+        alert(err instanceof Error ? err.message : "Failed to create avatar. Please try again.");
+      }
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const handleResumeDraft = (id: string | number) => {
-    router.push(`/avatars/create/draft-${id}`);
+    router.push(`/avatars/create/${id}`);
   };
 
-  return (
-    <div className="h-full overflow-hidden">
-      <div className="h-full overflow-y-auto px-6 pb-8 pt-6 lg:px-8">
-        <FadeIn direction="down" distance={10}>
-          <header className="mb-12 flex items-end justify-between border-b border-[#d6dbd4] pb-10">
-            <div className="flex flex-col gap-3">
-              <h1 className="font-display text-7xl font-bold leading-none tracking-tight text-[#1f3027]">Avatars</h1>
-              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#8ca1c5]">
-                Manage, train, and deploy your intelligent digital workforce
-              </p>
-            </div>
-            
-            <motion.button 
-              onClick={handleCreateNew}
-              whileHover={{ scale: 1.02, y: -2 }}
-              whileTap={{ scale: 0.98 }}
-              className="group relative flex items-center gap-3 overflow-hidden rounded-full bg-[#1c2120] px-8 py-4 text-[11px] font-bold uppercase tracking-[0.2em] text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-300 hover:shadow-[0_20px_40px_rgba(60,159,149,0.25)]"
-            >
-              <div className="absolute inset-0 bg-gradient-to-r from-[#3c9f95] to-[#90d5c8] opacity-0 transition-opacity duration-300 group-hover:opacity-20" />
-              <span className="material-symbols-outlined !text-[20px] text-[#3c9f95] transition-transform duration-300 group-hover:scale-110">add_circle</span>
-              Create Avatar
-            </motion.button>
-          </header>
-        </FadeIn>
+  const handleViewDetails = (id: number) => {
+    router.push(`/avatars/${id}`);
+  };
 
-        <section className="mb-10">
-          <FadeIn direction="up" distance={10}>
-            <div className="mb-5 flex gap-2.5">
-              <span className="inline-block w-1 shrink-0 rounded-full bg-[#3c9f95]" />
-              <div className="flex flex-col justify-center">
-                <h2 className="font-display text-2xl leading-tight text-[#233529]">Continue</h2>
-                <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8ca1c5]">
-                  pickup where you left off
-                </p>
-              </div>
-            </div>
-          </FadeIn>
+  const handleDelete = useCallback(async (avatarId: number) => {
+    if (!confirm("Are you sure you want to delete this avatar?")) return;
+    setActionLoading(avatarId);
+    setActionError(null);
+    try {
+      await deleteAvatar(avatarId);
+      window.location.reload();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Failed to delete avatar");
+    } finally {
+      setActionLoading(null);
+    }
+  }, []);
 
-          <StaggerContainer className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin">
-            {draftCards.map((card) => (
-              <StaggerItem key={card.id}>
-                <AvatarCard
-                  id={card.id}
-                  title={card.title}
-                  image={card.image}
-                  status={card.status}
-                  statusTone={card.statusTone as any}
-                  modified={card.modified}
-                  isTraining={card.isTraining}
-                  type="draft"
-                  onAction={() => handleResumeDraft(card.id)}
-                />
-              </StaggerItem>
-            ))}
-          </StaggerContainer>
-        </section>
+  const handleRetryTraining = useCallback(async (avatarId: number) => {
+    setActionLoading(avatarId);
+    setActionError(null);
+    try {
+      await retryAvatarTraining(avatarId);
+      window.location.reload();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Failed to retry training");
+    } finally {
+      setActionLoading(null);
+    }
+  }, []);
 
-        <section>
-          <FadeIn direction="up" distance={10}>
-            <div className="mb-5 flex items-end justify-between">
-              <div className="flex gap-2.5">
-                <span className="inline-block w-1 shrink-0 rounded-full bg-[#3c9f95]" />
-                <div className="flex flex-col justify-center">
-                  <h2 className="font-display text-2xl leading-tight text-[#233529]">My Avatars</h2>
-                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8ca1c5]">
-                    all the avatars you created
-                  </p>
-                </div>
-              </div>
-              <button className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#2f9488] transition-colors hover:text-[#3c9f95]">
-                Manage All (10)
-              </button>
-            </div>
-          </FadeIn>
+  const handleClone = useCallback(async (avatarId: number) => {
+    setCloneError(null);
+    setCloningId(avatarId);
+    try {
+      const clonedAvatar = await cloneAvatar(avatarId);
+      setCloneSuccess(avatarId);
+      setTimeout(() => setCloneSuccess(null), 3000);
+      router.push(`/avatars/${clonedAvatar.id}`);
+    } catch (error) {
+      setCloneError(error instanceof Error ? error.message : "Failed to clone avatar");
+    } finally {
+      setCloningId(null);
+    }
+  }, [router]);
 
-          <StaggerContainer className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin">
-            {deploymentCards.map((card) => (
-              <StaggerItem key={card.id}>
-                <AvatarCard
-                  id={card.id}
-                  title={card.title}
-                  image={card.image}
-                  role={card.role}
-                  isActive={card.isActive}
-                  modified={card.modified}
-                  type="deployment"
-                />
-              </StaggerItem>
-            ))}
-          </StaggerContainer>
-        </section>
-
-        <section className="mb-14 mt-14">
-          <FadeIn direction="up" distance={10}>
-            <div className="mb-5 flex items-end justify-between">
-              <div className="flex gap-2.5">
-                <span className="inline-block w-1 shrink-0 rounded-full bg-[#3c9f95]" />
-                <div className="flex flex-col justify-center">
-                  <h2 className="font-display text-2xl leading-tight text-[#233529]">Organisation's Avatars</h2>
-                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8ca1c5]">
-                    Shared Avatars Across Your Team
-                  </p>
-                </div>
-              </div>
-              <button className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#2f9488] transition-colors hover:text-[#3c9f95]">
-                Browse All
-              </button>
-            </div>
-          </FadeIn>
-
-          <StaggerContainer className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin">
-            {deploymentCards.slice(0, 3).map((card) => (
-              <StaggerItem key={`org-${card.id}`}>
-                <AvatarCard
-                  id={card.id}
-                  title={`${card.title} (Org)`}
-                  image={card.image}
-                  role="Corporate rep"
-                  modified="1 day ago"
-                  type="deployment"
-                />
-              </StaggerItem>
-            ))}
-          </StaggerContainer>
-        </section>
-
-        <section className="mt-14 border-t border-[#d6dbd4] pt-12">
-          <FadeIn direction="up" distance={10}>
-            <div className="mb-8">
-              <div className="flex items-center justify-between">
-                <div className="flex gap-2.5">
-                  <span className="inline-block w-1 shrink-0 rounded-full bg-[#3c9f95]" />
-                  <div className="flex flex-col justify-center">
-                    <h2 className="font-display text-2xl leading-tight text-[#233529]">Other Avatars</h2>
-                    <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8ca1c5]">
-                      marketplace to buy and use other avatars
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-8 flex flex-wrap items-center gap-4">
-                <div className="relative flex-1 min-w-[300px]">
-                  <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#8da1bf] transition-colors duration-300 peer-focus:text-[#3c9f95]">search</span>
-                  <input 
-                    type="text" 
-                    placeholder="SEARCH AVATARS..." 
-                    className="peer w-full rounded-2xl border border-[#d6dbd4] bg-white/50 py-4 pl-12 pr-4 text-[11px] font-bold uppercase tracking-[0.1em] text-[#1c2120] ring-[#3c9f95] transition-all duration-300 focus:bg-white focus:outline-none focus:ring-2 focus:shadow-[0_8px_30px_rgb(60,159,149,0.1)]"
-                  />
-                </div>
-                
-                <div className="flex gap-2">
-                  {["All Types", "Support", "Marketing", "Sales"].map((filter) => (
-                    <button 
-                      key={filter}
-                      className={`rounded-full px-5 py-2.5 text-[10px] font-bold uppercase tracking-[0.15em] transition-all duration-300 ${
-                        filter === "All Types" 
-                          ? "bg-[#1c2120] text-white shadow-[0_4px_12px_rgba(0,0,0,0.1)] hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(0,0,0,0.15)]" 
-                          : "bg-white text-[#5c6d66] border border-[#d6dbd4] hover:border-[#3c9f95] hover:text-[#3c9f95] hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(60,159,149,0.1)]"
-                      }`}
-                    >
-                      {filter}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </FadeIn>
-
-          <StaggerContainer className="flex flex-wrap gap-x-4 gap-y-8">
-            {[...deploymentCards, ...draftCards].map((card, idx) => (
-              <StaggerItem key={`other-${idx}`}>
-                <AvatarCard
-                  id={card.id}
-                  title={card.title}
-                  image={card.image}
-                  role="Public Identity"
-                  modified="Updated recently"
-                  type="deployment"
-                />
-              </StaggerItem>
-            ))}
-          </StaggerContainer>
-          
-          <div className="mt-12 flex justify-center pb-12">
-            <button className="group flex items-center gap-2 rounded-full bg-white px-8 py-4 text-[11px] font-bold uppercase tracking-[0.2em] text-[#1c2120] shadow-[0_4px_14px_rgba(0,0,0,0.05)] border border-[#d6dbd4] transition-all duration-300 hover:border-[#3c9f95] hover:text-[#3c9f95] hover:shadow-[0_8px_30px_rgba(60,159,149,0.15)] hover:-translate-y-1">
-              Load More Avatars
-              <span className="material-symbols-outlined !text-[18px] transition-transform duration-300 group-hover:translate-y-0.5">expand_more</span>
-            </button>
-          </div>
-        </section>
-      </div>
+  const exploreControls = (
+    <div className="flex items-center gap-4">
+      <SearchBar 
+        placeholder="SEARCH AVATARS..." 
+        value={searchQuery}
+        onChange={handleSearchChange}
+        className="min-w-[200px]"
+      />
+      <IndustryDropdown
+        industries={industries}
+        selectedIndustryId={selectedIndustry}
+        onSelect={handleIndustryChange}
+      />
+      <SortTabs selected={sortBy} onChange={handleSortChange} />
     </div>
+  );
+
+  return (
+    <PageContainer>
+      <PageHeader
+        title="Avatars"
+        subtitle="Manage, train, and deploy your intelligent digital workforce"
+        action={{ icon: "add_circle", label: isCreating ? "Creating..." : "Create Avatar", onClick: handleCreateNew }}
+      />
+
+      {actionError && (
+        <div className="mb-6 rounded-xl bg-red-50 p-4 text-sm text-red-600">
+          {actionError}
+        </div>
+      )}
+
+      <section className="mb-10">
+        <SectionHeading title="Continue" description="pickup where you left off" />
+        <StaggerContainer className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin">
+          {drafts.map((card) => (
+            <StaggerItem key={card.id}>
+              <AvatarCard
+                id={card.id}
+                title={card.name || "Untitled Avatar"}
+                image={card.active_card_image_url || ""}
+                status={getStatusLabel(card.build_state)}
+                statusTone={getStatusTone(card.build_state)}
+                modified={formatDate(card.updated_at)}
+                isTraining={card.build_state === "training_lora"}
+                type="draft"
+                actionLabel={actionLoading === card.id ? "Loading..." : "Continue"}
+                actionIcon="play_arrow"
+                onAction={() => handleResumeDraft(card.id)}
+                secondaryActionLabel={card.build_state === "failed_training" ? "Retry" : undefined}
+                secondaryActionIcon={card.build_state === "failed_training" ? "refresh" : undefined}
+                onSecondaryAction={card.build_state === "failed_training" ? () => handleRetryTraining(card.id) : undefined}
+                tertiaryActionLabel="Delete"
+                tertiaryActionIcon="delete"
+                onTertiaryAction={() => handleDelete(card.id)}
+              />
+            </StaggerItem>
+          ))}
+          {drafts.length === 0 && !isLoading && (
+            <p className="text-muted text-sm">No drafts yet. Create your first avatar!</p>
+          )}
+        </StaggerContainer>
+      </section>
+
+      <section>
+        <SectionHeading title="My Avatars" description="all the avatars you created" />
+        <StaggerContainer className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin">
+          {deployments.map((card) => (
+            <StaggerItem key={card.id}>
+              <AvatarCard
+                id={card.id}
+                title={card.name || "Unnamed Avatar"}
+                image={card.active_card_image_url || ""}
+                role={card.role_paragraph || ""}
+                modified={formatDate(card.updated_at)}
+                type="deployment"
+                actionLabel="Use"
+                actionIcon="play_circle"
+                onAction={() => handleViewDetails(card.id)}
+                secondaryActionLabel="Remove"
+                secondaryActionIcon="link_off"
+                onSecondaryAction={() => setShowRemoveModal({ id: card.id, name: card.name || "Unnamed Avatar" })}
+                tertiaryActionLabel="Delete"
+                tertiaryActionIcon="delete_forever"
+                onTertiaryAction={() => handleDelete(card.id)}
+              />
+            </StaggerItem>
+          ))}
+          {deployments.length === 0 && !isLoading && (
+            <p className="text-muted text-sm">No completed avatars yet.</p>
+          )}
+        </StaggerContainer>
+      </section>
+
+      {orgAvatars.length > 0 && (
+        <section className="mb-14 mt-14">
+          <SectionHeading title="Organisation's Avatars" description="Shared Avatars Across Your Team" />
+          <StaggerContainer className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin">
+            {orgAvatars.map((card) => (
+              <StaggerItem key={card.id}>
+                <AvatarCard
+                  id={card.id}
+                  title={card.name || "Unnamed Avatar"}
+                  image={card.active_card_image_url || ""}
+                  role={card.role_paragraph || "Corporate Avatar"}
+                  modified={formatDate(card.updated_at)}
+                  type="deployment"
+                  actionLabel="Use"
+                  actionIcon="play_circle"
+                  onAction={() => handleViewDetails(card.id)}
+                  secondaryActionLabel="Clone"
+                  secondaryActionIcon="content_copy"
+                  onSecondaryAction={() => handleClone(card.id)}
+                />
+              </StaggerItem>
+            ))}
+          </StaggerContainer>
+        </section>
+      )}
+
+      <section className="mt-14 border-t border-border pt-12">
+        <SectionHeading 
+          title="Other Avatars" 
+          description="marketplace to buy and use other avatars"
+          rightControls={exploreControls}
+        />
+
+        {cloneError && (
+          <div className="mb-6 rounded-xl bg-red-50 p-4 text-sm text-red-600">
+            {cloneError}
+          </div>
+        )}
+
+        <StaggerContainer className="flex flex-wrap gap-x-4 gap-y-8">
+          {exploreAvatars.map((card) => (
+            <StaggerItem key={card.id}>
+              <AvatarCard
+                id={card.id}
+                title={card.name || "Unnamed Avatar"}
+                image={card.active_card_image_url || ""}
+                role={card.role_paragraph || "Public Identity"}
+                modified={`${card.clone_count} clones`}
+                type="deployment"
+                actionLabel={cloneSuccess === card.id ? "Bought!" : (cloningId === card.id ? "Buying..." : "Buy")}
+                actionIcon={cloneSuccess === card.id ? "check" : "shopping_cart"}
+                onAction={() => handleClone(card.id)}
+              />
+            </StaggerItem>
+          ))}
+          {exploreAvatars.length === 0 && !isLoading && (
+            <p className="text-muted text-sm w-full text-center py-8">
+              No public avatars available. Check back later!
+            </p>
+          )}
+        </StaggerContainer>
+
+        {exploreAvatars.length > 0 && hasMoreExplore && (
+          <LoadMoreButton onClick={loadMoreExplore} disabled={isLoadingMore}>
+            {isLoadingMore ? "Loading..." : "Load More Avatars"}
+          </LoadMoreButton>
+        )}
+      </section>
+
+      {showRemoveModal && (
+        <RemoveFromAutomationsModal
+          avatarId={showRemoveModal.id}
+          avatarName={showRemoveModal.name}
+          onClose={() => setShowRemoveModal(null)}
+          onRemoved={() => window.location.reload()}
+        />
+      )}
+    </PageContainer>
   );
 }

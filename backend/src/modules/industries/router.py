@@ -1,24 +1,17 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from typing import List
 
 from src.core.database import get_db
+from src.modules.industries.models import Industry
+from src.modules.avatars.schemas import IndustryResponse
 
 router = APIRouter()
 
 
-@router.get("")
+@router.get("", response_model=List[IndustryResponse])
 async def list_industries(db: AsyncSession = Depends(get_db)):
-    # Placeholder - will implement with proper model
-    return [
-        {
-            "id": 1,
-            "name": "Education",
-            "description": "Phonics, language learning, STEM",
-        },
-        {"id": 2, "name": "Finance", "description": "Personal finance, investing"},
-        {"id": 3, "name": "Health & Wellness", "description": "Fitness, nutrition"},
-        {"id": 4, "name": "Technology", "description": "Software, coding tutorials"},
-        {"id": 5, "name": "Lifestyle", "description": "Fashion, home decor, travel"},
-        {"id": 6, "name": "Business", "description": "Entrepreneurship, leadership"},
-    ]
+    result = await db.execute(select(Industry).order_by(Industry.name))
+    industries = result.scalars().all()
+    return industries

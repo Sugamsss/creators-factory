@@ -1,12 +1,14 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Button } from "@/shared/ui/button";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { VisualIdentityStep } from "./VisualIdentityStep";
 import { FinalizeAppearanceStep } from "./FinalizeAppearanceStep";
 import { PersonalityStep } from "./PersonalityStep";
+import { setAuthRedirect, useAuth } from "@/features/auth";
+import { createAvatar, getAvatar, updateAvatar } from "@/features/avatars/services/avatarApi";
 
 interface CreationWorkspaceProps {
   draftId: string;
@@ -19,7 +21,52 @@ const steps = [
 ];
 
 export function CreationWorkspace({ draftId }: CreationWorkspaceProps) {
+  const router = useRouter();
+  const { isAuthenticated, isLoading: isAuthLoading } = useAuth();
   const [currentStep, setCurrentStep] = useState(1);
+  const [avatarName, setAvatarName] = useState("Loading...");
+  const [isAuthChecked, setIsAuthChecked] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+
+  useEffect(() => {
+    if (isAuthLoading) return;
+
+    if (!isAuthenticated) {
+      setAuthRedirect(`/avatars/create/${draftId}`);
+      router.push("/login");
+    } else {
+      setIsAuthChecked(true);
+    }
+  }, [draftId, isAuthenticated, isAuthLoading, router]);
+
+  useEffect(() => {
+    if (!isAuthChecked) return;
+
+    if (draftId === "new") {
+      // Create a new avatar draft
+      setIsCreating(true);
+      void createAvatar()
+        .then(draft => {
+          // Redirect to the actual draft page
+          router.replace(`/avatars/create/${draft.id}`);
+        })
+        .catch(err => {
+          console.error("Failed to create avatar:", err);
+          setAuthRedirect(`/avatars/create/${draftId}`);
+          router.push("/login");
+        })
+        .finally(() => setIsCreating(false));
+    } else if (!Number.isNaN(Number(draftId))) {
+      // Fetch existing avatar
+      void getAvatar(Number(draftId))
+        .then(data => data.name && setAvatarName(data.name || "Untitled Avatar"))
+        .catch(err => console.error("Failed to fetch avatar name", err));
+    }
+  }, [draftId, isAuthChecked, router]);
+
+  if (!isAuthChecked || isCreating) {
+    return null;
+  }
 
   return (
     <div className="flex h-screen bg-transparent overflow-hidden">
@@ -47,7 +94,19 @@ export function CreationWorkspace({ draftId }: CreationWorkspaceProps) {
             </label>
             <input 
               type="text" 
-              defaultValue="Neural Vanguard"
+              value={avatarName}
+              onChange={(e) => {
+                setAvatarName(e.target.value);
+                // Debounced save would be better, but for now just update state
+              }}
+              onBlur={async () => {
+                if (draftId === "new" || Number.isNaN(Number(draftId))) return;
+                try {
+                  await updateAvatar(Number(draftId), { name: avatarName });
+                } catch (e) {
+                  console.error("Failed to sync name", e);
+                }
+              }}
               className="w-full bg-white/50 border border-[#d6dbd4] rounded-xl px-4 py-3 text-sm font-semibold text-[#1a3a2a] outline-none focus:outline-none focus:ring-0 focus:border-[#3c9f95] transition-all placeholder:text-[#8ca1c5]/50 hover:bg-white"
               placeholder="Enter avatar name..."
             />
@@ -152,9 +211,9 @@ export function CreationWorkspace({ draftId }: CreationWorkspaceProps) {
               transition={{ duration: 0.4, ease: [0.23, 1, 0.32, 1] }}
               className="h-full"
             >
-              {currentStep === 1 && <VisualIdentityStep />}
-              {currentStep === 2 && <FinalizeAppearanceStep />}
-              {currentStep === 3 && <PersonalityStep />}
+              {currentStep === 1 && <VisualIdentityStep avatarId={draftId} />}
+              {currentStep === 2 && <FinalizeAppearanceStep avatarId={draftId} />}
+              {currentStep === 3 && <PersonalityStep avatarId={draftId} />}
             </motion.div>
           </AnimatePresence>
         </main>

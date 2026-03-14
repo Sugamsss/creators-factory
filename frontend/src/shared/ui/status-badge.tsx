@@ -3,7 +3,7 @@ import { cn } from "@/shared/lib/utils";
 
 type Status = "draft" | "training" | "ready" | "in_use" | "paused" | "failed" | "processing";
 
-interface StatusBadgeProps {
+export interface StatusBadgeProps {
   status: Status;
   showLabel?: boolean;
   className?: string;

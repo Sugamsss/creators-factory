@@ -1,6 +1,6 @@
 "use client";
 
-import { motion, HTMLMotionProps } from "framer-motion";
+import { motion, type HTMLMotionProps, type Transition } from "framer-motion";
 import React from "react";
 
 // Standard transitions
@@ -9,16 +9,16 @@ export const transitions = {
     type: "spring",
     stiffness: 300,
     damping: 30,
-  },
+  } as Transition,
   gentle: {
     type: "spring",
     stiffness: 260,
     damping: 20,
-  },
+  } as Transition,
   smooth: {
     duration: 0.4,
-    ease: [0.22, 1, 0.36, 1],
-  },
+    ease: [0.22, 1, 0.36, 1] as const,
+  } as Transition,
 };
 
 // Reusable animated items

@@ -26,8 +26,8 @@ export function LoadingSkeleton({
 
 export function AvatarCardSkeleton() {
   return (
-    <div className="glass-card rounded-3xl overflow-hidden">
-      <LoadingSkeleton className="h-72 w-full" />
+    <div className="bg-white rounded-[24px] overflow-hidden shadow-md">
+      <LoadingSkeleton className="h-[320px] w-full" />
       <div className="p-8 space-y-4">
         <LoadingSkeleton variant="text" className="w-1/3" />
         <LoadingSkeleton variant="text" className="w-2/3" />

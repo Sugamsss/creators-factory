@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "@/styles/globals.css";
 import { QueryProvider } from "@/shared/lib/query-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
+import { AuthProvider } from "@/features/auth";
 
 export const metadata: Metadata = {
   title: "Creator Studio",
@@ -18,7 +19,9 @@ export default function RootLayout({
       <body className="min-h-screen" suppressHydrationWarning={true}>
         <ThemeProvider>
           <QueryProvider>
-            {children}
+            <AuthProvider>
+              {children}
+            </AuthProvider>
           </QueryProvider>
         </ThemeProvider>
       </body>

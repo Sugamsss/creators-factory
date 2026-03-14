@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "./button";
 
-interface EmptyStateProps {
+export interface EmptyStateProps {
   icon?: string;
   title: string;
   description?: string;

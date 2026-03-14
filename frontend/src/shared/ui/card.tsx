@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { cn } from "@/shared/lib/utils";
-import { motion } from "framer-motion";
 
 interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   variant?: "default" | "glass" | "bordered";
@@ -18,22 +17,18 @@ const Card = React.forwardRef<HTMLDivElement, CardProps>(
     };
 
     return (
-      <motion.div
+      <div
         ref={ref}
-        whileHover={hover ? { 
-          y: -4, 
-          boxShadow: "0 20px 40px -12px rgba(0,0,0,0.12)",
-          transition: { type: "spring", stiffness: 300, damping: 20 }
-        } : undefined}
         className={cn(
-          "rounded-2xl overflow-hidden transition-colors",
+          "rounded-2xl overflow-hidden transition-all duration-300",
+          hover && "hover:-translate-y-1 hover:shadow-[0_20px_40px_-12px_rgba(0,0,0,0.12)]",
           variants[variant],
           className
         )}
         {...props}
       >
         {children}
-      </motion.div>
+      </div>
     );
   }
 );
