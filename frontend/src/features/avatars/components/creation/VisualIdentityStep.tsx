@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   attachImage,
   deleteAttachment,
+  deleteVisualVersion,
   editBaseImage,
   generateBaseImage,
   getAvatar,
@@ -48,19 +49,15 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
   const [activeVersionId, setActiveVersionId] = useState<number | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [maskHistory, setMaskHistory] = useState<string[]>([]);
-  const [maskFuture, setMaskFuture] = useState<string[]>([]);
-  
-  // Canvas & Transformation State
+
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [brushMode, setBrushMode] = useState<'brush' | 'eraser' | 'pan' | null>(null);
+  const [isAnnotating, setIsAnnotating] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
-  
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -112,99 +109,30 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || (brushMode !== 'brush' && brushMode !== 'eraser')) return;
+    if (!canvas) return;
 
     const resizeCanvas = () => {
-      const rect = canvas.getBoundingClientRect();
+      const parent = canvas.parentElement;
+      if (!parent) return;
+      const rect = parent.getBoundingClientRect();
       const scaleFactor = window.devicePixelRatio || 1;
       canvas.width = rect.width * scaleFactor;
       canvas.height = rect.height * scaleFactor;
       const ctx = canvas.getContext('2d');
-      if (ctx) ctx.scale(scaleFactor, scaleFactor);
-    };
-
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-    return () => window.removeEventListener('resize', resizeCanvas);
-  }, [brushMode, activeVersionId, activeAspect]);
-
-  const clearMask = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  }, []);
-
-  useEffect(() => {
-    clearMask();
-    setMaskHistory([]);
-    setMaskFuture([]);
-  }, [activeVersionId, activeAspect, clearMask]);
-
-  const captureMaskSnapshot = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    setMaskHistory((previous) => [...previous, canvas.toDataURL("image/png")]);
-    setMaskFuture([]);
-  }, []);
-
-  const applyMaskSnapshot = useCallback((snapshot: string) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const image = new window.Image();
-    image.onload = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-    };
-    image.src = snapshot;
-  }, []);
-
-  const undoMask = useCallback(() => {
-    setMaskHistory((previous) => {
-      if (previous.length === 0) return previous;
-      const canvas = canvasRef.current;
-      if (!canvas) return previous;
-      const currentSnapshot = canvas.toDataURL("image/png");
-      const nextHistory = previous.slice(0, -1);
-      const targetSnapshot = previous[previous.length - 1];
-      setMaskFuture((future) => [currentSnapshot, ...future]);
-      applyMaskSnapshot(targetSnapshot);
-      return nextHistory;
-    });
-  }, [applyMaskSnapshot]);
-
-  const redoMask = useCallback(() => {
-    setMaskFuture((future) => {
-      if (future.length === 0) return future;
-      const canvas = canvasRef.current;
-      if (!canvas) return future;
-      const currentSnapshot = canvas.toDataURL("image/png");
-      const [targetSnapshot, ...remaining] = future;
-      setMaskHistory((history) => [...history, currentSnapshot]);
-      applyMaskSnapshot(targetSnapshot);
-      return remaining;
-    });
-  }, [applyMaskSnapshot]);
-
-  const getMaskBase64 = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    // Check if canvas is empty
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-    let hasMask = false;
-    for (let i = 3; i < pixels.length; i += 4) {
-      if (pixels[i] > 0) {
-        hasMask = true;
-        break;
+      if (ctx) {
+        ctx.scale(scaleFactor, scaleFactor);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
       }
+    };
+
+    if (isAnnotating) {
+      resizeCanvas();
+      window.addEventListener('resize', resizeCanvas);
     }
-    return hasMask ? canvas.toDataURL('image/png') : null;
-  };
+
+    return () => window.removeEventListener('resize', resizeCanvas);
+  }, [isAnnotating, activeVersionId]);
 
   const handleSend = async () => {
     if (!prompt.trim() || isGenerating) return;
@@ -220,15 +148,8 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
 
     try {
       const isEditMode = attachments.length > 0 || !!activeVersion;
-      const maskData = getMaskBase64();
       const selectedModel =
         MODEL_MAPPING[activeModel as keyof typeof MODEL_MAPPING] || "seedream_v5";
-      if (maskData && selectedModel !== "openai_image_1_5") {
-        setError("Mask editing is only supported for ChatGPT Image.");
-        setIsGenerating(false);
-        abortControllerRef.current = null;
-        return;
-      }
       const orderedReferenceImages: string[] = [];
       if (activeVersion) {
         orderedReferenceImages.push(activeVersion.image_url);
@@ -242,7 +163,6 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
             aspect_ratio: activeAspect,
             age: parsedAge,
             reference_image_urls: orderedReferenceImages,
-            mask_image_url: maskData
           }
         : {
             prompt,
@@ -251,16 +171,46 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
             age: parsedAge,
           };
 
-      const data = isEditMode
-        ? await editBaseImage(avatarId, payload, abortControllerRef.current.signal)
-        : await generateBaseImage(avatarId, payload, abortControllerRef.current.signal);
+      let data;
+      try {
+        data = isEditMode
+          ? await editBaseImage(avatarId, payload, abortControllerRef.current.signal)
+          : await generateBaseImage(avatarId, payload, abortControllerRef.current.signal);
+      } catch (err) {
+        console.log("API call returned error, fetching versions...");
+        const currentVersions = await getVisualVersions(avatarId);
+        if (currentVersions.length > 0) {
+          data = {
+            version_id: currentVersions[0].id,
+            version_number: currentVersions[0].version_number,
+            image_url: currentVersions[0].image_url,
+            prompt: currentVersions[0].prompt,
+            model: currentVersions[0].model_used,
+            aspect_ratio: currentVersions[0].aspect_ratio,
+          };
+        }
+      }
+      
       if (data) {
-        await fetchVersions();
         setActiveVersionId(data.version_id);
-        clearMask();
-        setMaskHistory([]);
-        setMaskFuture([]);
-        setBrushMode(null); // Exit inpainting mode after successful edit
+        setScale(1);
+        setOffset({ x: 0, y: 0 });
+        
+        if (data.aspect_ratio && isAspectRatio(data.aspect_ratio)) {
+          setActiveAspect(data.aspect_ratio);
+        }
+        
+        setVersions(prev => [{
+          id: data.version_id,
+          version_number: data.version_number,
+          image_url: data.image_url,
+          prompt: data.prompt,
+          model_used: data.model,
+          aspect_ratio: data.aspect_ratio,
+          is_active_base: true,
+          is_edit: isEditMode,
+          created_at: new Date().toISOString(),
+        }, ...prev]);
       }
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
@@ -312,35 +262,32 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = () => {
-    setIsDragging(false);
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(false);
     handleFileUpload(e.dataTransfer.files);
   };
 
-  const handleToolAction = (tool: string) => {
+  const handleToolAction = async (tool: string) => {
     switch (tool) {
       case 'brush':
-        setBrushMode(prev => prev === 'brush' ? null : 'brush');
-        break;
-      case 'ink_eraser':
-        setBrushMode(prev => prev === 'eraser' ? null : 'eraser');
-        break;
-      case 'pan':
-        setBrushMode(prev => prev === 'pan' ? null : 'pan');
+        if (isAnnotating) {
+          await attachAnnotatedImage();
+        }
+        setIsAnnotating(prev => !prev);
         break;
       case 'add':
-        setScale(prev => Math.min(prev + 0.2, 3));
+        setScale(prev => Math.min(prev + 0.25, 3));
         break;
       case 'remove':
-        setScale(prev => Math.max(prev - 0.2, 0.5));
+        setScale(prev => {
+          const newScale = Math.max(prev - 0.25, 1);
+          if (newScale === 1) {
+            setOffset({ x: 0, y: 0 });
+          }
+          return newScale;
+        });
         break;
       case 'download':
         if (activeVersion) {
@@ -352,32 +299,94 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
         }
         break;
       case 'delete':
-        captureMaskSnapshot();
-        clearMask();
-        setBrushMode(null);
+        if (activeVersion) {
+          try {
+            const currentVersionId = activeVersion.id;
+            const wasLastVersion = versions.length === 1;
+            await deleteVisualVersion(avatarId, currentVersionId);
+            await fetchVersions();
+            if (wasLastVersion) {
+              setActiveVersionId(null);
+              setScale(1);
+              setOffset({ x: 0, y: 0 });
+            }
+          } catch (err) {
+            console.error("Failed to delete version:", err);
+          }
+        }
         break;
-      case 'undo':
-        undoMask();
-        break;
-      case 'redo':
-        redoMask();
+      case 'attach':
+        if (activeVersion) {
+          try {
+            const response = await fetch(activeVersion.image_url);
+            const blob = await response.blob();
+            const file = new File([blob], `avatar-v${activeVersion.version_number}.png`, { type: 'image/png' });
+            const attachment = await attachImage(avatarId, file);
+            setAttachments(prev => [...prev, attachment]);
+          } catch (err) {
+            console.error("Failed to attach image:", err);
+          }
+        }
         break;
     }
   };
 
+  const attachAnnotatedImage = async () => {
+    if (!activeVersion || !canvasRef.current) return;
+    
+    try {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const imageElement = new window.Image();
+      imageElement.crossOrigin = "anonymous";
+      
+      await new Promise<void>((resolve, reject) => {
+        imageElement.onload = () => resolve();
+        imageElement.onerror = reject;
+        imageElement.src = activeVersion.image_url;
+      });
+
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = imageElement.naturalWidth;
+      tempCanvas.height = imageElement.naturalHeight;
+      const tempCtx = tempCanvas.getContext('2d');
+      if (!tempCtx) return;
+
+      tempCtx.drawImage(imageElement, 0, 0);
+      
+      const scaleX = canvas.width / (canvas.offsetWidth || canvas.offsetWidth);
+      const scaleY = canvas.height / (canvas.offsetHeight || canvas.offsetHeight);
+      
+      tempCtx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, tempCanvas.width, tempCanvas.height);
+
+      tempCanvas.toBlob(async (blob) => {
+        if (!blob) return;
+        const file = new File([blob], 'annotation.png', { type: 'image/png' });
+        const attachment = await attachImage(avatarId, file);
+        setAttachments(prev => [...prev, attachment]);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }, 'image/png');
+    } catch (err) {
+      console.error("Failed to attach annotated image:", err);
+    }
+  };
+
   const onMouseDown = (e: React.MouseEvent) => {
-    if (brushMode === 'pan') {
-      setIsPanning(true);
+    e.stopPropagation();
+    if (scale > 1) {
+      setIsPanning(prev => !prev);
       setLastMousePos({ x: e.clientX, y: e.clientY });
-    } else if (brushMode === 'brush' || brushMode === 'eraser') {
-      captureMaskSnapshot();
+      e.preventDefault();
+    } else if (isAnnotating) {
       setIsDrawing(true);
       draw(e);
     }
   };
 
   const onMouseMove = (e: React.MouseEvent) => {
-    if (isPanning) {
+    if (isPanning && scale > 1) {
       const dx = e.clientX - lastMousePos.x;
       const dy = e.clientY - lastMousePos.y;
       setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
@@ -388,14 +397,14 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
   };
 
   const onMouseUp = () => {
-    setIsPanning(false);
     setIsDrawing(false);
     const ctx = canvasRef.current?.getContext('2d');
     if (ctx) ctx.beginPath();
   };
 
   const draw = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!isDrawing || (brushMode !== 'brush' && brushMode !== 'eraser') || !canvasRef.current) return;
+    if (!isDrawing || !isAnnotating || !canvasRef.current) return;
+
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -407,8 +416,7 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
     ctx.lineWidth = 20;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#ef4444';
-    ctx.globalCompositeOperation = brushMode === 'eraser' ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
 
     ctx.lineTo(x, y);
     ctx.stroke();
@@ -424,10 +432,10 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
   };
 
   const getCursorStyle = () => {
-    if (brushMode === 'pan') {
+    if (scale > 1) {
       return isPanning ? 'grabbing' : 'grab';
     }
-    if (brushMode === 'brush' || brushMode === 'eraser') {
+    if (isAnnotating) {
       return 'crosshair';
     }
     return 'default';
@@ -440,28 +448,8 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
     <div 
       className="h-full flex flex-col overflow-hidden relative group/workspace bg-transparent"
       onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Drag and Drop Overlay */}
-      {isDragging && (
-        <div className="absolute inset-0 z-50 bg-[#3c9f95]/10 backdrop-blur-sm flex items-center justify-center pointer-events-auto transition-all">
-          <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="bg-white/90 backdrop-blur-md rounded-[32px] p-10 shadow-[0_32px_80px_-16px_rgba(0,0,0,0.1)] border border-[#3c9f95] flex flex-col items-center gap-4"
-          >
-            <div className="w-16 h-16 rounded-2xl bg-[#3c9f95]/10 flex items-center justify-center text-[#3c9f95]">
-              <span className="material-symbols-outlined text-4xl">cloud_upload</span>
-            </div>
-            <div className="text-center">
-              <p className="text-lg font-semibold text-[#1a3a2a]">Drop to Iterate</p>
-              <p className="text-sm text-[#8ca1c5] mt-1">Add context for the next generation</p>
-            </div>
-          </motion.div>
-        </div>
-      )}
-      
       {/* Heavy Noise Texture & Frosted Glass Base */}
       <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
         <div className="absolute inset-0 bg-[#f8faf9]/60 backdrop-blur-[100px]" />
@@ -485,15 +473,12 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
         {/* Floating Tools Rail */}
         <div className="absolute right-8 top-1/2 -translate-y-1/2 flex flex-col gap-2 p-1.5 rounded-full bg-white/80 backdrop-blur-md border border-[#e4ebe4] shadow-2xl pointer-events-auto">
           {[
-            { icon: "pan_tool", label: "Pan", action: "pan", active: brushMode === 'pan' },
-            { icon: "brush", label: "Brush", action: "brush", active: brushMode === 'brush' },
-            { icon: "ink_eraser", label: "Eraser", action: "ink_eraser", active: brushMode === 'eraser' },
-            { icon: "undo", label: "Undo Mask", action: "undo", disabled: maskHistory.length === 0 },
-            { icon: "redo", label: "Redo Mask", action: "redo", disabled: maskFuture.length === 0 },
-            { icon: "add", label: "Zoom In", action: "add" },
-            { icon: "remove", label: "Zoom Out", action: "remove" },
+            { icon: "brush", label: "Brush", action: "brush", active: isAnnotating },
+            { icon: "add", label: "Zoom In", action: "add", disabled: scale >= 3 },
+            { icon: "remove", label: "Zoom Out", action: "remove", disabled: scale <= 1 },
             { icon: "download", label: "Download", action: "download" },
-            { icon: "layers_clear", label: "Clear Mask", action: "delete" },
+            { icon: "delete", label: "Delete", action: "delete", disabled: !activeVersion },
+            { icon: "attach_file", label: "Attach", action: "attach", disabled: !activeVersion },
           ].map((tool) => (
             <button
               key={tool.label}
@@ -501,7 +486,7 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
               aria-label={tool.label}
               aria-pressed={Boolean(tool.active)}
               onClick={() => handleToolAction(tool.action)}
-              disabled={Boolean(tool.disabled) || (tool.action === 'download' && !activeVersion)}
+              disabled={Boolean(tool.disabled)}
               className={`flex items-center justify-center rounded-full transition-all duration-200 disabled:opacity-30 disabled:hover:scale-100
                 ${tool.active 
                   ? 'bg-[#1a3a2a] text-white shadow-lg scale-110' 
@@ -561,167 +546,159 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
 
       {/* ─── Canvas Workspace ─── */}
       <div 
-        ref={containerRef}
         className="flex-1 min-h-0 relative flex items-center justify-center pointer-events-none p-12 overflow-hidden"
       >
-        <div 
-          className="w-full h-full relative flex items-center justify-center transition-transform duration-300"
-          style={{ 
-            transform: `scale(${scale}) translate(${offset.x}px, ${offset.y}px)`,
-          }}
-        >
+        <div className="w-full h-full relative flex items-center justify-center">
           <AnimatePresence mode="wait">
-            {isGenerating ? (
+            {/* Empty State - Glass with Grain */}
+            {!activeVersion && !isGenerating && (
               <motion.div
-                key="loading-overlay"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute inset-x-[-100%] inset-y-[-100%] z-[60] flex flex-col items-center justify-center pointer-events-auto"
+                key="empty-frame"
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="w-full h-full flex items-center justify-center"
               >
-                {/* Immersive Frosted Overlay */}
-                <div className="absolute inset-0 bg-[#f8faf9]/40 backdrop-blur-[120px]" />
-                
-                {/* Animated Background Blobs */}
-                <motion.div 
-                  animate={{ 
-                    scale: [1, 1.2, 1],
-                    x: [0, 50, 0],
-                    y: [0, -30, 0],
-                  }}
-                  transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
-                  className="absolute top-1/4 left-1/4 w-96 h-96 bg-[#3c9f95]/10 rounded-full blur-[100px]"
-                />
-                <motion.div 
-                  animate={{ 
-                    scale: [1, 1.3, 1],
-                    x: [0, -60, 0],
-                    y: [0, 40, 0],
-                  }}
-                  transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
-                  className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-[#1a3a2a]/5 rounded-full blur-[100px]"
-                />
-
-                <div className="relative z-10 flex flex-col items-center gap-8">
-                  <div className="relative">
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
-                      className="w-56 h-56 rounded-full border border-[#3c9f95]/20 flex items-center justify-center"
-                    >
-                      <motion.div
-                        animate={{ rotate: -360 }}
-                        transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-                        className="w-48 h-48 rounded-full border border-dashed border-[#3c9f95]/40"
-                      />
-                    </motion.div>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-16 h-16 rounded-full bg-white shadow-2xl flex items-center justify-center">
-                        <motion.span 
-                          animate={{ 
-                            scale: [1, 1.15, 1],
-                            opacity: [0.7, 1, 0.7]
-                          }}
-                          transition={{ duration: 2, repeat: Infinity }}
-                          className="material-symbols-outlined text-[#3c9f95] text-3xl"
-                        >
-                          generating_tokens
-                        </motion.span>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex flex-col items-center gap-3 text-center">
-                    <motion.h2 
-                      initial={{ y: 20, opacity: 0 }}
-                      animate={{ y: 0, opacity: 1 }}
-                      className="text-[#1a3a2a] font-display text-3xl font-semibold tracking-tight"
-                    >
-                      Refining Vision
-                    </motion.h2>
-                    <motion.p 
-                      initial={{ y: 15, opacity: 0 }}
-                      animate={{ y: 0, opacity: 1 }}
-                      transition={{ delay: 0.1 }}
-                      className="text-[#8ca1c5] text-[12px] font-bold uppercase tracking-[0.3em]"
-                    >
-                      Neural Engine Pipeline Active
-                    </motion.p>
-                  </div>
-
-                  <motion.button
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ delay: 0.2 }}
-                    onClick={handleStop}
-                    className="mt-4 px-8 py-3 rounded-full bg-white hover:bg-red-50 text-red-500 font-bold text-[11px] uppercase tracking-[0.15em] border border-red-100 shadow-xl transition-all"
-                  >
-                    Abort Sequence
-                  </motion.button>
-                </div>
-              </motion.div>
-            ) : null}
-
-            {activeVersion ? (
-              <motion.div
-                key={activeVersionId || 'default'}
-                initial={{ opacity: 0, scale: 0.98 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
-                className="w-full h-full flex items-center justify-center relative pointer-events-auto"
-                style={{ cursor: getCursorStyle() }}
-                onMouseDown={onMouseDown}
-                onMouseMove={onMouseMove}
-                onMouseUp={onMouseUp}
-                onMouseLeave={onMouseUp}
-              >
-                <div className={`relative max-w-full max-h-full transition-all duration-500
+                <div 
+                  className={`relative max-w-full max-h-full overflow-hidden rounded-2xl shadow-lg pointer-events-auto
                     ${activeAspect === '1:1' ? 'aspect-square h-full' : 
                       activeAspect === '3:4' ? 'aspect-[3/4] h-full' : 
                       activeAspect === '9:16' ? 'aspect-[9/16] h-full' : 
                       activeAspect === '4:3' ? 'aspect-[4/3] w-full' : 
-                      'aspect-[16/9] w-full'}`}>
+                      'aspect-[16/9] w-full'}`}
+                >
+                  {/* Base gradient */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-[#f5f7f6] to-[#e4ebe8]" />
                   
-                  <Image
-                    src={activeVersion.image_url}
-                    fill
-                    className="w-full h-full object-cover rounded-[24px] shadow-[0_32px_80px_-16px_rgba(0,0,0,0.22)] border-[4px] border-white"
-                    alt="Current Version"
-                    priority
-                  />
+                  {/* Grain overlay - stationary */}
+                  <div className="absolute inset-0 grain-texture opacity-[0.025] pointer-events-none" />
 
-                  {/* Mask Canvas Overlay */}
-                  <canvas
-                    ref={canvasRef}
-                    className={`absolute inset-0 w-full h-full rounded-[24px] z-10 transition-opacity duration-300
-                      ${(brushMode === 'brush' || brushMode === 'eraser') ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-                  />
+                  {/* Content */}
+                  <div className="relative z-10 flex flex-col items-center justify-center h-full gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-white/60 backdrop-blur-sm border border-white/30 shadow-sm flex items-center justify-center text-[#3c9f95]">
+                      <span className="material-symbols-outlined !text-[18px]">auto_awesome</span>
+                    </div>
+                    <div className="text-center px-4">
+                      <p className="text-[#1a3a2a] text-xs font-semibold tracking-wide">First Pass Generation</p>
+                      <p className="text-[#8ca1c5] text-[10px] mt-0.5">describe the Avatar you want to see below</p>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {(activeVersion || isGenerating) && (
+              <div className="w-full h-full flex items-center justify-center">
+                {/* Frame */}
+                <div 
+                  ref={containerRef}
+                  className={`relative max-w-full max-h-full overflow-hidden rounded-2xl shadow-lg pointer-events-auto
+                    ${activeAspect === '1:1' ? 'aspect-square h-full' : 
+                      activeAspect === '3:4' ? 'aspect-[3/4] h-full' : 
+                      activeAspect === '9:16' ? 'aspect-[9/16] h-full' : 
+                      activeAspect === '4:3' ? 'aspect-[4/3] w-full' : 
+                      'aspect-[16/9] w-full'}`}
+                  style={{ cursor: getCursorStyle() }}
+                  onMouseDown={onMouseDown}
+                  onMouseMove={onMouseMove}
+                  onMouseUp={onMouseUp}
+                  onMouseLeave={onMouseUp}
+                >
+                  {/* Loading overlay - First generation (no image yet) */}
+                  {isGenerating && !activeVersion && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="absolute inset-0 z-[55] flex flex-col items-center justify-center"
+                    >
+                      {/* Base gradient */}
+                      <div className="absolute inset-0 bg-gradient-to-br from-[#f5f7f6] to-[#e4ebe8]" />
+                      
+                      {/* Grain overlay - animated */}
+                      <motion.div 
+                        className="absolute inset-0 grain-texture opacity-[0.03] pointer-events-none"
+                        animate={{ opacity: [0.02, 0.04, 0.02] }}
+                        transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                      />
+
+                      <div className="relative z-10 flex flex-col items-center gap-4">
+                        <div className="relative">
+                          <div className="w-14 h-14 rounded-full border-2 border-[#3c9f95]/30" />
+                          <motion.div
+                            animate={{ rotate: 360 }}
+                            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                            className="absolute inset-0 flex items-center justify-center"
+                          >
+                            <div className="w-10 h-10 rounded-full border-2 border-t-[#3c9f95] border-transparent" />
+                          </motion.div>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-[#1a3a2a] text-sm font-semibold">Creating</p>
+                          <p className="text-[#8ca1c5] text-[10px] mt-0.5">Generation in progress</p>
+                        </div>
+                        <motion.button
+                          initial={{ scale: 0.9, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          onClick={handleStop}
+                          className="px-4 py-1.5 rounded-full bg-white/80 text-red-500 text-[10px] font-semibold border border-red-100 shadow-sm transition-all hover:bg-red-50"
+                        >
+                          Abort
+                        </motion.button>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* Loading overlay - Edit mode (image exists, generating) */}
+                  {isGenerating && activeVersion && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="absolute inset-0 z-[55] flex items-end justify-center pb-4 pointer-events-auto bg-black/20"
+                    >
+                      <div className="bg-white/90 backdrop-blur-sm rounded-full px-3 py-1.5 shadow-md flex items-center gap-2">
+                        <div className="w-4 h-4 rounded-full border-2 border-t-[#3c9f95] border-transparent animate-spin" />
+                        <span className="text-[#1a3a2a] text-[9px] font-semibold">Refining</span>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* Image container - This moves with zoom/pan */}
+                  {activeVersion && (
+                    <div 
+                      className="absolute inset-0 transition-transform duration-300"
+                      style={{ 
+                        transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+                        width: '100%',
+                        height: '100%',
+                      }}
+                    >
+                      <Image
+                        src={activeVersion.image_url}
+                        fill
+                        className="w-full h-full object-cover"
+                        alt="Current Version"
+                        priority
+                      />
+
+                      {/* Annotation Canvas Overlay */}
+                      <canvas
+                        ref={canvasRef}
+                        className={`absolute inset-0 w-full h-full z-10 transition-opacity duration-300
+                          ${isAnnotating ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                      />
+                    </div>
+                  )}
 
                   {/* Mode Indicator */}
-                  {brushMode && (
+                  {isAnnotating && (
                     <div className="absolute top-6 left-6 z-20 px-4 py-2 rounded-full bg-[#1a3a2a]/80 backdrop-blur-md text-white text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 border border-white/20">
                       <span className="w-2 h-2 rounded-full bg-[#3c9f95] animate-pulse" />
-                      {brushMode === 'pan' ? 'Navigation Mode' : `Inpainting Mode: ${brushMode}`}
+                      Annotation Mode
                     </div>
                   )}
                 </div>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="empty"
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="flex flex-col items-center gap-6 py-24 px-16 rounded-[48px] bg-white/40 backdrop-blur-md border border-white/60 shadow-2xl"
-              >
-                <div className="w-20 h-20 rounded-3xl bg-white border border-[#d6dbd4] flex items-center justify-center text-[#3c9f95] shadow-sm relative overflow-hidden group">
-                  <div className="absolute inset-0 bg-gradient-to-tr from-[#3c9f95]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                  <span className="material-symbols-outlined !text-[36px] relative z-10">auto_awesome</span>
-                </div>
-                <div className="text-center">
-                  <h3 className="text-[#1a3a2a] font-display text-2xl font-semibold tracking-tight">Vast Potential</h3>
-                  <p className="text-[#8ca1c5] text-sm mt-2 max-w-[280px] leading-relaxed">Illuminate your avatar&apos;s digital soul by describing their essence below.</p>
-                </div>
-              </motion.div>
+              </div>
             )}
           </AnimatePresence>
         </div>

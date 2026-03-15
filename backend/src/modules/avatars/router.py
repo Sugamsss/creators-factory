@@ -77,7 +77,9 @@ class AvatarEventBroker:
     def __init__(self) -> None:
         self._subscribers: Dict[int, List[asyncio.Queue[str]]] = {}
 
-    async def publish(self, avatar_id: int, event_type: str, payload: Dict[str, Any]) -> None:
+    async def publish(
+        self, avatar_id: int, event_type: str, payload: Dict[str, Any]
+    ) -> None:
         payload_with_event = {"event": event_type, **payload}
         message = f"event: {event_type}\ndata: {json.dumps(payload_with_event)}\n\n"
         for queue in self._subscribers.get(avatar_id, []):
@@ -138,7 +140,9 @@ def _derive_deployment_summary_from_bindings(
     if not bindings:
         return AvatarDeploymentSummary.NOT_IN_USE
 
-    active_count = sum(1 for b in bindings if b.status == AutomationBindingStatus.ACTIVE)
+    active_count = sum(
+        1 for b in bindings if b.status == AutomationBindingStatus.ACTIVE
+    )
     paused_count = len(bindings) - active_count
 
     if active_count == len(bindings):
@@ -222,7 +226,9 @@ def _avatar_detail_response(avatar: Avatar) -> AvatarDetailResponse:
         clone_count=avatar.clone_count,
         created_at=avatar.created_at,
         updated_at=avatar.updated_at,
-        field_locks=[AvatarFieldLockResponse.model_validate(lock) for lock in avatar.field_locks],
+        field_locks=[
+            AvatarFieldLockResponse.model_validate(lock) for lock in avatar.field_locks
+        ],
         training_summary=_training_summary(avatar),
         personality_payload=_latest_personality_payload(avatar),
     )
@@ -253,7 +259,9 @@ def _is_public_eligible(avatar: Avatar) -> bool:
     )
 
 
-async def _fetch_avatar_with_relations(db: AsyncSession, avatar_id: int) -> Optional[Avatar]:
+async def _fetch_avatar_with_relations(
+    db: AsyncSession, avatar_id: int
+) -> Optional[Avatar]:
     result = await db.execute(
         select(Avatar)
         .options(
@@ -269,7 +277,9 @@ async def _fetch_avatar_with_relations(db: AsyncSession, avatar_id: int) -> Opti
     return result.scalar_one_or_none()
 
 
-async def _ensure_visual_profile(db: AsyncSession, avatar: Avatar) -> AvatarVisualProfile:
+async def _ensure_visual_profile(
+    db: AsyncSession, avatar: Avatar
+) -> AvatarVisualProfile:
     existing_result = await db.execute(
         select(AvatarVisualProfile).where(AvatarVisualProfile.avatar_id == avatar.id)
     )
@@ -297,7 +307,9 @@ async def _enforce_visual_history_cap(db: AsyncSession, avatar_id: int) -> None:
         await db.delete(stale)
 
 
-def _cancel_background_task(task_map: Dict[int, asyncio.Task[Any]], avatar_id: int) -> None:
+def _cancel_background_task(
+    task_map: Dict[int, asyncio.Task[Any]], avatar_id: int
+) -> None:
     task = task_map.get(avatar_id)
     if not task:
         return
@@ -333,7 +345,9 @@ async def _invalidate_step2_outputs(db: AsyncSession, avatar: Avatar) -> None:
     _cancel_background_task(training_tasks, avatar.id)
     _cancel_background_task(reaction_tasks, avatar.id)
 
-    refs_result = await db.execute(select(ReferenceSlot).where(ReferenceSlot.avatar_id == avatar.id))
+    refs_result = await db.execute(
+        select(ReferenceSlot).where(ReferenceSlot.avatar_id == avatar.id)
+    )
     for ref in refs_result.scalars().all():
         await db.delete(ref)
 
@@ -359,7 +373,9 @@ def _validate_completion(avatar: Avatar, references: List[ReferenceSlot]) -> Non
         raise HTTPException(status_code=400, detail="Active base face is required")
 
     if len(references) != 15:
-        raise HTTPException(status_code=400, detail="Reference set must contain exactly 15 images")
+        raise HTTPException(
+            status_code=400, detail="Reference set must contain exactly 15 images"
+        )
 
     profile = avatar.visual_profile
     if not profile or profile.training_status != AvatarTrainingStatus.COMPLETED:
@@ -379,7 +395,9 @@ def _validate_completion(avatar: Avatar, references: List[ReferenceSlot]) -> Non
 
     communication_principles = _json_load_list(avatar.communication_principles)
     if not communication_principles:
-        raise HTTPException(status_code=400, detail="At least one communication principle is required")
+        raise HTTPException(
+            status_code=400, detail="At least one communication principle is required"
+        )
 
     if avatar.industry_id is None:
         raise HTTPException(status_code=400, detail="Industry is required")
@@ -459,7 +477,9 @@ async def _start_lora_training(avatar_id: int) -> None:
                 profile = await _ensure_visual_profile(session, avatar)
                 profile.training_status = AvatarTrainingStatus.RUNNING
                 profile.training_started_at = datetime.now(timezone.utc)
-                profile.training_attempt_count = max(profile.training_attempt_count, attempt_index + 1)
+                profile.training_attempt_count = max(
+                    profile.training_attempt_count, attempt_index + 1
+                )
                 profile.training_error_code = None
                 avatar.build_state = AvatarBuildState.TRAINING_LORA
                 await session.commit()
@@ -501,7 +521,9 @@ async def _start_lora_training(avatar_id: int) -> None:
 
                 profile.training_status = AvatarTrainingStatus.COMPLETED
                 profile.training_completed_at = datetime.now(timezone.utc)
-                profile.lora_model_id = f"lora-avatar-{avatar_id}-v{profile.training_attempt_count}"
+                profile.lora_model_id = (
+                    f"lora-avatar-{avatar_id}-v{profile.training_attempt_count}"
+                )
                 avatar.build_state = AvatarBuildState.DRAFT_PERSONALITY
                 await session.commit()
 
@@ -562,7 +584,9 @@ async def _start_lora_training(avatar_id: int) -> None:
     training_tasks[avatar_id] = asyncio.create_task(_run())
 
 
-@router.post("/drafts", response_model=AvatarDetailResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/drafts", response_model=AvatarDetailResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_avatar_draft(
     payload: AvatarDraftCreate,
     db: AsyncSession = Depends(get_db),
@@ -610,7 +634,10 @@ async def get_avatars_hub(
 
     continue_result = await db.execute(
         select(Avatar)
-        .options(selectinload(Avatar.automation_bindings), selectinload(Avatar.visual_profile))
+        .options(
+            selectinload(Avatar.automation_bindings),
+            selectinload(Avatar.visual_profile),
+        )
         .where(Avatar.owner_id == user_id, Avatar.build_state.in_(list(DRAFT_STATES)))
         .order_by(Avatar.updated_at.desc())
     )
@@ -618,7 +645,10 @@ async def get_avatars_hub(
 
     my_result = await db.execute(
         select(Avatar)
-        .options(selectinload(Avatar.automation_bindings), selectinload(Avatar.visual_profile))
+        .options(
+            selectinload(Avatar.automation_bindings),
+            selectinload(Avatar.visual_profile),
+        )
         .where(
             Avatar.owner_id == user_id,
             Avatar.build_state == AvatarBuildState.READY,
@@ -630,7 +660,10 @@ async def get_avatars_hub(
 
     org_result = await db.execute(
         select(Avatar)
-        .options(selectinload(Avatar.automation_bindings), selectinload(Avatar.visual_profile))
+        .options(
+            selectinload(Avatar.automation_bindings),
+            selectinload(Avatar.visual_profile),
+        )
         .where(
             Avatar.ownership_scope == "org",
             Avatar.build_state == AvatarBuildState.READY,
@@ -659,7 +692,10 @@ async def get_all_personal_avatars(
 ):
     result = await db.execute(
         select(Avatar)
-        .options(selectinload(Avatar.automation_bindings), selectinload(Avatar.visual_profile))
+        .options(
+            selectinload(Avatar.automation_bindings),
+            selectinload(Avatar.visual_profile),
+        )
         .where(
             Avatar.owner_id == current_user["id"],
             Avatar.ownership_scope == "personal",
@@ -674,7 +710,8 @@ async def get_all_personal_avatars(
         avatars = [
             avatar
             for avatar in avatars
-            if term in (avatar.name or "").lower() or term in (avatar.description or "").lower()
+            if term in (avatar.name or "").lower()
+            or term in (avatar.description or "").lower()
         ]
 
     if source_type:
@@ -690,7 +727,9 @@ async def get_all_personal_avatars(
         avatars = [
             avatar
             for avatar in avatars
-            if (_derive_deployment_summary(avatar) or AvatarDeploymentSummary.NOT_IN_USE).value
+            if (
+                _derive_deployment_summary(avatar) or AvatarDeploymentSummary.NOT_IN_USE
+            ).value
             == deployment_summary
         ]
 
@@ -815,7 +854,10 @@ async def update_avatar(
     update_data = payload.model_dump(exclude_unset=True)
     locked_paths = {lock.field_path for lock in avatar.field_locks if lock.is_locked}
 
-    changed_fields = set(update_data.keys()) - {"personality_payload", "complete_avatar"}
+    changed_fields = set(update_data.keys()) - {
+        "personality_payload",
+        "complete_avatar",
+    }
     if avatar.source_type == "clone":
         locked_hit = [field for field in changed_fields if field in locked_paths]
         if locked_hit:
@@ -825,7 +867,9 @@ async def update_avatar(
             )
 
     if "communication_principles" in update_data:
-        avatar.communication_principles = _json_dump_list(update_data.pop("communication_principles"))
+        avatar.communication_principles = _json_dump_list(
+            update_data.pop("communication_principles")
+        )
 
     for field in [
         "name",
@@ -845,7 +889,9 @@ async def update_avatar(
         if parsed_payload.get("backstory"):
             avatar.backstory = parsed_payload["backstory"]
         if parsed_payload.get("communication_principles"):
-            avatar.communication_principles = _json_dump_list(parsed_payload["communication_principles"])
+            avatar.communication_principles = _json_dump_list(
+                parsed_payload["communication_principles"]
+            )
 
         snapshot_result = await db.execute(
             select(func.max(AvatarPersonalitySnapshot.version_number)).where(
@@ -898,7 +944,9 @@ async def delete_avatar(
 
     avatar.build_state = AvatarBuildState.SOFT_DELETED
     avatar.deleted_at = datetime.now(timezone.utc)
-    avatar.hard_delete_at = avatar.deleted_at + timedelta(days=SOFT_DELETE_RETENTION_DAYS)
+    avatar.hard_delete_at = avatar.deleted_at + timedelta(
+        days=SOFT_DELETE_RETENTION_DAYS
+    )
     avatar.is_public = False
 
     bindings_result = await db.execute(
@@ -986,7 +1034,9 @@ async def clone_avatar(
         or source_avatar.source_type != "original"
         or source_avatar.deleted_at is not None
     ):
-        raise HTTPException(status_code=400, detail="Source avatar is not clone-eligible")
+        raise HTTPException(
+            status_code=400, detail="Source avatar is not clone-eligible"
+        )
 
     clone = Avatar(
         owner_id=current_user["id"],
@@ -1039,7 +1089,9 @@ async def deploy_avatar(
         raise HTTPException(status_code=404, detail="Avatar not found")
 
     if avatar.build_state != AvatarBuildState.READY:
-        raise HTTPException(status_code=400, detail="Only ready avatars can be deployed")
+        raise HTTPException(
+            status_code=400, detail="Only ready avatars can be deployed"
+        )
 
     query = await db.execute(
         select(AutomationBinding).where(
@@ -1051,7 +1103,9 @@ async def deploy_avatar(
     found_ids = {item.id for item in automations}
     missing_ids = sorted(set(payload.automation_ids) - found_ids)
     if missing_ids:
-        raise HTTPException(status_code=404, detail=f"Automation(s) not found: {missing_ids}")
+        raise HTTPException(
+            status_code=404, detail=f"Automation(s) not found: {missing_ids}"
+        )
 
     conflicts = [
         item.id
@@ -1080,7 +1134,9 @@ async def deploy_avatar(
     )
     return BindingActionResponse(
         avatar_id=avatar.id,
-        deployment_summary=(deployment_summary or AvatarDeploymentSummary.NOT_IN_USE).value,
+        deployment_summary=(
+            deployment_summary or AvatarDeploymentSummary.NOT_IN_USE
+        ).value,
         updated_automation_ids=sorted(payload.automation_ids),
     )
 
@@ -1130,12 +1186,16 @@ async def pause_avatar(
     )
     return BindingActionResponse(
         avatar_id=avatar.id,
-        deployment_summary=(deployment_summary or AvatarDeploymentSummary.NOT_IN_USE).value,
+        deployment_summary=(
+            deployment_summary or AvatarDeploymentSummary.NOT_IN_USE
+        ).value,
         updated_automation_ids=sorted(target_ids),
     )
 
 
-@router.post("/{avatar_id}/generate-base", response_model=GenerationResponse, status_code=202)
+@router.post(
+    "/{avatar_id}/generate-base", response_model=GenerationResponse, status_code=202
+)
 async def generate_base_image(
     avatar_id: int,
     payload: GenerateBaseRequest,
@@ -1147,10 +1207,14 @@ async def generate_base_image(
         raise HTTPException(status_code=404, detail="Avatar not found")
 
     if avatar.source_type == "clone":
-        raise HTTPException(status_code=400, detail="Clone visual identity is immutable")
+        raise HTTPException(
+            status_code=400, detail="Clone visual identity is immutable"
+        )
 
     version_result = await db.execute(
-        select(func.max(VisualVersion.version_number)).where(VisualVersion.avatar_id == avatar.id)
+        select(func.max(VisualVersion.version_number)).where(
+            VisualVersion.avatar_id == avatar.id
+        )
     )
     next_version = (version_result.scalar() or 0) + 1
 
@@ -1169,7 +1233,9 @@ async def generate_base_image(
 
     fal_url = result["images"][0]["url"]
     filename = f"base_v{next_version}_{uuid.uuid4().hex[:8]}.png"
-    s3_url = await media_service.download_and_store(fal_url, avatar.id, "visual", filename)
+    s3_url = await media_service.download_and_store(
+        fal_url, avatar.id, "visual", filename
+    )
 
     if await _should_invalidate_step2_outputs(db, avatar):
         await _invalidate_step2_outputs(db, avatar)
@@ -1189,7 +1255,9 @@ async def generate_base_image(
         enhanced_prompt=enhanced_prompt,
         model_used=payload.model,
         aspect_ratio=payload.aspect_ratio,
-        quality="medium" if payload.model in {"openai_image_1_5", "google_nano_banana_2"} else "auto_3K",
+        quality="medium"
+        if payload.model in {"openai_image_1_5", "google_nano_banana_2"}
+        else "auto_3K",
         is_edit=False,
         edit_source_url=fal_url,
         is_active_base=True,
@@ -1211,7 +1279,9 @@ async def generate_base_image(
     )
 
 
-@router.post("/{avatar_id}/edit-base", response_model=GenerationResponse, status_code=202)
+@router.post(
+    "/{avatar_id}/edit-base", response_model=GenerationResponse, status_code=202
+)
 async def edit_base_image(
     avatar_id: int,
     payload: EditBaseRequest,
@@ -1223,7 +1293,9 @@ async def edit_base_image(
         raise HTTPException(status_code=404, detail="Avatar not found")
 
     if avatar.source_type == "clone":
-        raise HTTPException(status_code=400, detail="Clone visual identity is immutable")
+        raise HTTPException(
+            status_code=400, detail="Clone visual identity is immutable"
+        )
 
     if payload.mask_image_url and payload.model != "openai_image_1_5":
         raise HTTPException(
@@ -1242,17 +1314,19 @@ async def edit_base_image(
         raise HTTPException(status_code=400, detail="No active base image selected")
 
     version_result = await db.execute(
-        select(func.max(VisualVersion.version_number)).where(VisualVersion.avatar_id == avatar.id)
+        select(func.max(VisualVersion.version_number)).where(
+            VisualVersion.avatar_id == avatar.id
+        )
     )
     next_version = (version_result.scalar() or 0) + 1
 
     try:
-        enhanced_prompt = PromptTemplateService.get_step1_edit_prompt(payload.prompt, payload.age)
+        enhanced_prompt = PromptTemplateService.get_step1_edit_prompt(
+            payload.prompt, payload.age
+        )
         reference_images = [url for url in (payload.reference_image_urls or []) if url]
         if not reference_images:
-            reference_images = [
-                base_version.edit_source_url or base_version.image_url
-            ]
+            reference_images = [base_version.edit_source_url or base_version.image_url]
 
         result = await fal_service.submit_and_wait(
             model=payload.model,
@@ -1267,7 +1341,9 @@ async def edit_base_image(
 
     fal_url = result["images"][0]["url"]
     filename = f"edit_v{next_version}_{uuid.uuid4().hex[:8]}.png"
-    s3_url = await media_service.download_and_store(fal_url, avatar.id, "visual", filename)
+    s3_url = await media_service.download_and_store(
+        fal_url, avatar.id, "visual", filename
+    )
 
     if await _should_invalidate_step2_outputs(db, avatar):
         await _invalidate_step2_outputs(db, avatar)
@@ -1287,7 +1363,9 @@ async def edit_base_image(
         enhanced_prompt=enhanced_prompt,
         model_used=payload.model,
         aspect_ratio=payload.aspect_ratio or base_version.aspect_ratio,
-        quality="medium" if payload.model in {"openai_image_1_5", "google_nano_banana_2"} else "auto_3K",
+        quality="medium"
+        if payload.model in {"openai_image_1_5", "google_nano_banana_2"}
+        else "auto_3K",
         is_edit=True,
         mask_image_url=payload.mask_image_url,
         edit_source_url=fal_url,
@@ -1322,7 +1400,9 @@ async def set_active_base(
         raise HTTPException(status_code=404, detail="Avatar not found")
 
     if avatar.source_type == "clone":
-        raise HTTPException(status_code=400, detail="Clone visual identity is immutable")
+        raise HTTPException(
+            status_code=400, detail="Clone visual identity is immutable"
+        )
 
     version_result = await db.execute(
         select(VisualVersion).where(
@@ -1373,7 +1453,35 @@ async def get_visual_versions(
     return result.scalars().all()
 
 
-@router.post("/{avatar_id}/generate-references", response_model=GenerateReferencesResponse, status_code=202)
+@router.delete("/{avatar_id}/visual-versions/{version_id}", status_code=204)
+async def delete_visual_version(
+    avatar_id: int,
+    version_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    avatar = await _fetch_avatar_with_relations(db, avatar_id)
+    if not avatar or not _can_edit_avatar(avatar, current_user["id"]):
+        raise HTTPException(status_code=404, detail="Avatar not found")
+
+    result = await db.execute(
+        select(VisualVersion).where(
+            VisualVersion.id == version_id, VisualVersion.avatar_id == avatar_id
+        )
+    )
+    version = result.scalar_one_or_none()
+    if not version:
+        raise HTTPException(status_code=404, detail="Visual version not found")
+
+    await db.delete(version)
+    await db.commit()
+
+
+@router.post(
+    "/{avatar_id}/generate-references",
+    response_model=GenerateReferencesResponse,
+    status_code=202,
+)
 async def generate_references(
     avatar_id: int,
     db: AsyncSession = Depends(get_db),
@@ -1384,7 +1492,9 @@ async def generate_references(
         raise HTTPException(status_code=404, detail="Avatar not found")
 
     if avatar.source_type == "clone":
-        raise HTTPException(status_code=400, detail="Clone visual identity is immutable")
+        raise HTTPException(
+            status_code=400, detail="Clone visual identity is immutable"
+        )
 
     base_version_result = await db.execute(
         select(VisualVersion)
@@ -1399,7 +1509,9 @@ async def generate_references(
     source_image_url = base_version.edit_source_url or base_version.image_url
     slot_definitions = PromptTemplateService.get_step2_reference_slots()
 
-    existing_result = await db.execute(select(ReferenceSlot).where(ReferenceSlot.avatar_id == avatar.id))
+    existing_result = await db.execute(
+        select(ReferenceSlot).where(ReferenceSlot.avatar_id == avatar.id)
+    )
     existing_map = {slot.slot_key: slot for slot in existing_result.scalars().all()}
 
     generated_slots: List[ReferenceSlot] = []
@@ -1413,7 +1525,9 @@ async def generate_references(
             image_url = base_version.image_url
             prompt = "Base face"
         else:
-            slot_prompt = f"Turn the person in the image to: {slot_def.get('prompt', '')}"
+            slot_prompt = (
+                f"Turn the person in the image to: {slot_def.get('prompt', '')}"
+            )
             try:
                 result = await fal_service.submit_and_wait(
                     model="seedream_v5",
@@ -1459,7 +1573,10 @@ async def generate_references(
         if key not in expected_keys:
             await db.delete(stale)
 
-    if avatar.visual_profile and avatar.visual_profile.training_status == AvatarTrainingStatus.COMPLETED:
+    if (
+        avatar.visual_profile
+        and avatar.visual_profile.training_status == AvatarTrainingStatus.COMPLETED
+    ):
         avatar.visual_profile.training_status = AvatarTrainingStatus.NOT_STARTED
         avatar.visual_profile.lora_model_id = None
         avatar.visual_profile.training_completed_at = None
@@ -1481,7 +1598,9 @@ async def generate_references(
     )
 
 
-@router.post("/{avatar_id}/train-lora", response_model=AvatarDetailResponse, status_code=202)
+@router.post(
+    "/{avatar_id}/train-lora", response_model=AvatarDetailResponse, status_code=202
+)
 async def train_lora(
     avatar_id: int,
     db: AsyncSession = Depends(get_db),
@@ -1492,12 +1611,18 @@ async def train_lora(
         raise HTTPException(status_code=404, detail="Avatar not found")
 
     if avatar.source_type == "clone":
-        raise HTTPException(status_code=400, detail="Clone visual identity is immutable")
+        raise HTTPException(
+            status_code=400, detail="Clone visual identity is immutable"
+        )
 
-    refs_result = await db.execute(select(ReferenceSlot).where(ReferenceSlot.avatar_id == avatar.id))
+    refs_result = await db.execute(
+        select(ReferenceSlot).where(ReferenceSlot.avatar_id == avatar.id)
+    )
     refs = refs_result.scalars().all()
     if len(refs) != 15:
-        raise HTTPException(status_code=400, detail="Generate all 15 reference images first")
+        raise HTTPException(
+            status_code=400, detail="Generate all 15 reference images first"
+        )
 
     profile = await _ensure_visual_profile(db, avatar)
     if profile.training_status in {
@@ -1530,7 +1655,9 @@ async def retry_lora(
 
     profile = await _ensure_visual_profile(db, avatar)
     if profile.training_status != AvatarTrainingStatus.FAILED:
-        raise HTTPException(status_code=400, detail="Retry is only available for failed training")
+        raise HTTPException(
+            status_code=400, detail="Retry is only available for failed training"
+        )
 
     profile.training_status = AvatarTrainingStatus.QUEUED
     profile.training_error_code = None
@@ -1588,7 +1715,9 @@ async def get_reference_slots(
     return result.scalars().all()
 
 
-@router.post("/{avatar_id}/attach-image", response_model=AttachmentResponse, status_code=201)
+@router.post(
+    "/{avatar_id}/attach-image", response_model=AttachmentResponse, status_code=201
+)
 async def attach_image(
     avatar_id: int,
     file: UploadFile = File(...),
@@ -1606,7 +1735,11 @@ async def attach_image(
     if len(file_content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File size exceeds 10MB limit")
 
-    file_ext = file.filename.split(".")[-1] if file.filename and "." in file.filename else "png"
+    file_ext = (
+        file.filename.split(".")[-1]
+        if file.filename and "." in file.filename
+        else "png"
+    )
     filename = f"attachment_{uuid.uuid4().hex[:8]}.{file_ext}"
 
     try:

@@ -260,6 +260,12 @@ export async function setActiveBase(avatarId: string, versionId: number): Promis
   });
 }
 
+export async function deleteVisualVersion(avatarId: string, versionId: number): Promise<void> {
+  await apiRequest(`/avatars/${avatarId}/visual-versions/${versionId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function getReferenceSlots(avatarId: string): Promise<ReferenceSlot[]> {
   return apiRequest<ReferenceSlot[]>(`/avatars/${avatarId}/reference-slots`);
 }

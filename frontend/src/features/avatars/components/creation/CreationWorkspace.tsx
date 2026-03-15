@@ -8,7 +8,7 @@ import { VisualIdentityStep } from "./VisualIdentityStep";
 import { FinalizeAppearanceStep } from "./FinalizeAppearanceStep";
 import { PersonalityStep } from "./PersonalityStep";
 import { buildLoginPath, useAuth } from "@/features/auth";
-import { createAvatarDraft, getAvatar, updateAvatar } from "@/features/avatars/services/avatarApi";
+import { createAvatarDraft, deleteAvatar, generateReferences, getAvatar, trainLora, updateAvatar } from "@/features/avatars/services/avatarApi";
 
 interface CreationWorkspaceProps {
   draftId: string;
@@ -24,7 +24,7 @@ export function CreationWorkspace({ draftId }: CreationWorkspaceProps) {
   const router = useRouter();
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth();
   const [currentStep, setCurrentStep] = useState(1);
-  const [avatarName, setAvatarName] = useState("Loading...");
+  const [avatarName, setAvatarName] = useState("unknown");
   const [isAuthChecked, setIsAuthChecked] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -61,6 +61,67 @@ export function CreationWorkspace({ draftId }: CreationWorkspaceProps) {
         .catch(err => console.error("Failed to fetch avatar name", err));
     }
   }, [draftId, isAuthChecked, router]);
+
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  const handleProceed = async () => {
+    if (currentStep >= 3) return;
+    
+    if (draftId === "new" || Number.isNaN(Number(draftId))) {
+      return;
+    }
+
+    if (currentStep === 1) {
+      setIsProcessing(true);
+      try {
+        await generateReferences(draftId);
+        setCurrentStep(2);
+      } catch (err) {
+        console.error("Failed to generate references:", err);
+      } finally {
+        setIsProcessing(false);
+      }
+    } else if (currentStep === 2) {
+      setIsProcessing(true);
+      try {
+        await trainLora(draftId);
+        setCurrentStep(3);
+      } catch (err) {
+        console.error("Failed to train LoRA:", err);
+      } finally {
+        setIsProcessing(false);
+      }
+    }
+  };
+
+  const handleSave = async () => {
+    if (!draftId || draftId === "new" || Number.isNaN(Number(draftId))) {
+      router.push("/avatars");
+      return;
+    }
+
+    try {
+      await updateAvatar(Number(draftId), { name: avatarName });
+      router.push("/avatars");
+    } catch (err) {
+      console.error("Failed to save avatar:", err);
+      router.push("/avatars");
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!draftId || draftId === "new" || Number.isNaN(Number(draftId))) return;
+    
+    const confirmed = window.confirm("Are you sure you want to delete this avatar? This action cannot be undone.");
+    if (!confirmed) return;
+
+    try {
+      await deleteAvatar(Number(draftId));
+      router.push("/avatars");
+    } catch (err) {
+      console.error("Failed to delete avatar:", err);
+    }
+  };
 
   if (!isAuthChecked || isCreating) {
     return null;
@@ -171,21 +232,41 @@ export function CreationWorkspace({ draftId }: CreationWorkspaceProps) {
           {/* 4. Action Buttons */}
           <div className="shrink-0 space-y-3">
             <div className="grid grid-cols-2 gap-3">
-              <button className="flex items-center justify-center gap-2 h-11 rounded-xl border border-[#f0f3f0] text-red-500/70 text-[10px] font-bold uppercase tracking-widest transition-all hover:bg-red-50 hover:text-red-500 hover:border-red-100 active:scale-95">
+              <button onClick={handleDelete} className="flex items-center justify-center gap-2 h-11 rounded-xl border border-[#f0f3f0] text-red-500/70 text-[10px] font-bold uppercase tracking-widest transition-all hover:bg-red-50 hover:text-red-500 hover:border-red-100 active:scale-95">
                 <span className="material-symbols-outlined !text-[16px]">delete</span>
                 Delete
               </button>
-              <button className="flex items-center justify-center gap-2 h-11 rounded-xl border border-[#f0f3f0] text-[#5c6d66] text-[10px] font-bold uppercase tracking-widest transition-all hover:bg-black hover:text-white hover:border-black active:scale-95">
+              <button onClick={handleSave} className="flex items-center justify-center gap-2 h-11 rounded-xl border border-[#f0f3f0] text-[#5c6d66] text-[10px] font-bold uppercase tracking-widest transition-all hover:bg-black hover:text-white hover:border-black active:scale-95">
                 <span className="material-symbols-outlined !text-[16px]">save</span>
                 Save
               </button>
             </div>
+            {currentStep > 1 && (
+              <button 
+                onClick={() => setCurrentStep(prev => prev - 1)}
+                disabled={isProcessing}
+                className="w-full flex items-center justify-center gap-3 h-11 rounded-xl border border-[#d6dbd4] text-[#5c6d66] text-[10px] font-bold uppercase tracking-[0.2em] transition-all hover:bg-[#f4f7f5] hover:text-[#1a3a2a] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span className="material-symbols-outlined !text-[16px] transition-transform group-hover:-translate-x-1">arrow_back</span>
+                Back
+              </button>
+            )}
             <button 
-              onClick={() => currentStep < 3 && setCurrentStep(prev => prev + 1)}
-              className="w-full flex items-center justify-center gap-3 h-11 rounded-xl bg-[#3c9f95] text-white text-[10px] font-bold uppercase tracking-[0.2em] shadow-lg shadow-[#3c9f95]/20 transition-all hover:bg-[#2d7a72] hover:shadow-xl active:scale-[0.98] group"
+              onClick={handleProceed}
+              disabled={isProcessing || currentStep >= 3}
+              className="w-full flex items-center justify-center gap-3 h-11 rounded-xl bg-[#3c9f95] text-white text-[10px] font-bold uppercase tracking-[0.2em] shadow-lg shadow-[#3c9f95]/20 transition-all hover:bg-[#2d7a72] hover:shadow-xl active:scale-[0.98] group disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Proceed Further
-              <span className="material-symbols-outlined !text-[16px] transition-transform group-hover:translate-x-1">arrow_forward</span>
+              {isProcessing ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  Proceed Further
+                  <span className="material-symbols-outlined !text-[16px] transition-transform group-hover:translate-x-1">arrow_forward</span>
+                </>
+              )}
             </button>
           </div>
         </div>
