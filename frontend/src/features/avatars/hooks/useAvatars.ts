@@ -8,13 +8,14 @@ import {
   createAvatarDraft,
   getAvatarsHub,
   getExploreAvatars,
-  getIndustries,
 } from "../services/avatarApi";
 
 interface ExploreParams {
   search?: string;
-  industryId?: number;
   sort?: "featured" | "popular" | "newest";
+  gender?: string;
+  ageRange?: string;
+  industry?: string;
 }
 
 export function useAvatars() {
@@ -22,7 +23,6 @@ export function useAvatars() {
   const [myAvatars, setMyAvatars] = useState<AvatarCardModel[]>([]);
   const [orgAvatars, setOrgAvatars] = useState<AvatarCardModel[]>([]);
   const [exploreAvatars, setExploreAvatars] = useState<ExploreAvatar[]>([]);
-  const [industries, setIndustries] = useState<AvatarIndustry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -35,10 +35,9 @@ export function useAvatars() {
     setIsLoading(true);
     setError(null);
     try {
-      const [hubData, exploreData, industriesData] = await Promise.all([
+      const [hubData, exploreData] = await Promise.all([
         getAvatarsHub(),
         getExploreAvatars({ sort: "newest" }),
-        getIndustries(),
       ]);
 
       const continueCreation = Array.isArray(hubData?.continue_creation)
@@ -54,7 +53,6 @@ export function useAvatars() {
       setExploreAvatars(exploreSection);
       setExploreCursor(exploreData?.next_cursor ?? null);
       setHasMoreExplore(Boolean(exploreData?.has_more));
-      setIndustries(Array.isArray(industriesData) ? industriesData : []);
       setExploreParams({ sort: "newest" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch avatars");
@@ -77,8 +75,10 @@ export function useAvatars() {
       try {
         const response = await getExploreAvatars({
           search: params.search,
-          industryId: params.industryId,
           sort: params.sort,
+          gender: params.gender,
+          ageRange: params.ageRange,
+          industry: params.industry,
         });
 
         if (reset) {
@@ -106,8 +106,10 @@ export function useAvatars() {
     try {
       const response = await getExploreAvatars({
         search: exploreParams.search,
-        industryId: exploreParams.industryId,
         sort: exploreParams.sort,
+        gender: exploreParams.gender,
+        ageRange: exploreParams.ageRange,
+        industry: exploreParams.industry,
         cursor: exploreCursor,
       });
 
@@ -135,7 +137,6 @@ export function useAvatars() {
     myAvatars,
     orgAvatars,
     exploreAvatars,
-    industries,
     isLoading,
     error,
     isLoadingMore,

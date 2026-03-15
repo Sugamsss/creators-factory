@@ -30,7 +30,11 @@ export default function VideosPage() {
 
       <FadeIn direction="up" distance={10} delay={0.1}>
         <div className="mb-12 flex flex-wrap items-center gap-4 border-b border-border pb-12">
-          <SearchBar placeholder="DISCOVER PRODUCTIONS..." />
+          <SearchBar 
+            placeholder="Search..." 
+            className="min-w-[160px]"
+            inputClassName="py-2.5 pl-10 pr-4 text-[10px] font-bold uppercase tracking-widest bg-white/80 border-[#d6dbd4]"
+          />
           <FilterBar filters={[...FILTER_OPTIONS.videos]} />
         </div>
       </FadeIn>

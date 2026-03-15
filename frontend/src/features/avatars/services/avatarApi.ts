@@ -77,6 +77,8 @@ export interface PersonalityPayload {
   tone_tags?: string[];
 }
 
+export type OwnershipScope = "personal" | "org" | "public";
+
 export interface AvatarUpdatePayload {
   name?: string | null;
   age?: number | null;
@@ -88,6 +90,7 @@ export interface AvatarUpdatePayload {
   active_card_image_url?: string | null;
   personality_payload?: PersonalityPayload;
   complete_avatar?: boolean;
+  ownership_scope?: OwnershipScope;
 }
 
 export interface ToggleVisibilityPayload {
@@ -106,7 +109,7 @@ export interface PausePayload {
 }
 
 export async function createAvatarDraft(
-  ownershipScope: "personal" | "org" = "personal",
+  ownershipScope: OwnershipScope = "personal",
   orgId?: number
 ): Promise<AvatarDetailModel> {
   return apiRequest<AvatarDetailModel>("/avatars/drafts", {
@@ -141,22 +144,22 @@ export async function getAllAvatars(options: {
 
 export async function getExploreAvatars(options: {
   search?: string;
-  industryId?: number;
   sort?: "featured" | "popular" | "newest";
+  gender?: string;
+  ageRange?: string;
+  industry?: string;
   cursor?: string;
   limit?: number;
 } = {}): Promise<ExploreResponse> {
   const params = new URLSearchParams();
   if (options.search) params.set("search", options.search);
-  if (options.industryId) params.set("industry_id", options.industryId.toString());
   if (options.sort) params.set("sort", options.sort);
+  if (options.gender) params.set("gender", options.gender);
+  if (options.ageRange) params.set("age_range", options.ageRange);
+  if (options.industry) params.set("industry", options.industry);
   if (options.cursor) params.set("cursor", options.cursor);
   if (options.limit) params.set("limit", options.limit.toString());
   return apiRequest<ExploreResponse>(`/avatars/explore?${params.toString()}`);
-}
-
-export async function getIndustries(): Promise<AvatarIndustry[]> {
-  return apiRequest<AvatarIndustry[]>("/industries");
 }
 
 export async function getAvatar(avatarId: number): Promise<AvatarDetailModel> {

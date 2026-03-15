@@ -28,7 +28,11 @@ export default function IndustriesPage() {
 
       <FadeIn direction="up" distance={10} delay={0.1}>
         <div className="mb-12 flex flex-wrap items-center gap-4">
-          <SearchBar placeholder="DISCOVER TOPICS..." />
+          <SearchBar 
+            placeholder="Search..." 
+            className="min-w-[160px]"
+            inputClassName="py-2.5 pl-10 pr-4 text-[10px] font-bold uppercase tracking-widest bg-white/80 border-[#d6dbd4]"
+          />
           <FilterBar filters={[...FILTER_OPTIONS.industries]} />
         </div>
       </FadeIn>

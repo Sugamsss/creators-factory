@@ -1,44 +1,40 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { getAvatar, getIndustries, updateAvatar } from "@/features/avatars/services/avatarApi";
+import { getAvatar, updateAvatar } from "@/features/avatars/services/avatarApi";
 import type { AvatarIndustry } from "@/features/avatars/types";
+import type { OwnershipScope } from "@/features/avatars/services/avatarApi";
 
 interface PersonalityStepProps {
   avatarId: string;
 }
 
 export function PersonalityStep({ avatarId }: PersonalityStepProps) {
-  const [formData, setFormData] = useState({
+const [formData, setFormData] = useState({
     name: "",
     age: "",
     description: "",
     backstory: "",
     communication_principles: "",
-    industry_id: "",
     role_paragraph: "",
+    ownership_scope: "personal" as OwnershipScope,
   });
-  const [industries, setIndustries] = useState<AvatarIndustry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
-      const [avatar, industryData] = await Promise.all([
-        getAvatar(Number(avatarId)),
-        getIndustries(),
-      ]);
+      const avatar = await getAvatar(Number(avatarId));
       setFormData({
         name: avatar.name || "",
         age: avatar.age?.toString() || "",
         description: avatar.description || "",
         backstory: avatar.backstory || "",
         communication_principles: (avatar.communication_principles || []).join("\n"),
-        industry_id: avatar.industry_id?.toString() || "",
         role_paragraph: avatar.role_paragraph || "",
+        ownership_scope: (avatar.ownership_scope as OwnershipScope) || "personal",
       });
-      setIndustries(industryData);
     } catch (error) {
       console.error("Failed to fetch personality data:", error);
       setMessage("Failed to load avatar personality data.");
@@ -64,8 +60,9 @@ export function PersonalityStep({ avatarId }: PersonalityStepProps) {
           .split("\n")
           .map((item) => item.trim())
           .filter(Boolean),
-        industry_id: formData.industry_id ? parseInt(formData.industry_id, 10) : null,
+        industry_id: null, // Removed field, send null
         role_paragraph: formData.role_paragraph || undefined,
+        ownership_scope: formData.ownership_scope,
         complete_avatar: completeAvatar,
       });
       setMessage(completeAvatar ? "Avatar completed successfully." : "Draft saved successfully.");
@@ -213,24 +210,7 @@ export function PersonalityStep({ avatarId }: PersonalityStepProps) {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-            <label className="space-y-2">
-              <span className="ml-1 text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a]">Industry</span>
-              <select
-                name="industry_id"
-                value={formData.industry_id}
-                onChange={handleChange}
-                className="w-full rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-3 text-sm"
-              >
-                <option value="">Select industry...</option>
-                {industries.map((industry) => (
-                  <option key={industry.id} value={industry.id}>
-                    {industry.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
+          <div className="grid grid-cols-1 gap-6">
             <label className="space-y-2">
               <span className="ml-1 text-[10px] font-bold uppercase tracking-[0.2em] text-[#1a3a2a]">Role</span>
               <input
@@ -260,6 +240,65 @@ export function PersonalityStep({ avatarId }: PersonalityStepProps) {
           <div className="rounded-2xl border border-[#d6dbd4] bg-white p-5 text-sm text-[#5c6d66]">
             Voice mode, reactions, tone tags, and advanced personality controls are preserved in payload snapshots and can be
             expanded in subsequent passes.
+          </div>
+        </section>
+
+        <section className="rounded-[32px] border border-[#d6dbd4] bg-white p-8 shadow-xl shadow-black/5">
+          <div className="mb-6 flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#3c9f95]/10 text-[#3c9f95]">
+              <span className="material-symbols-outlined !text-[20px]">public</span>
+            </span>
+            <div>
+              <h4 className="font-display text-xl text-[#1a3a2a]">Visibility</h4>
+              <p className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-[#8ca1c5]">
+                Choose who can access this avatar
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <label className="flex cursor-pointer items-center gap-4 rounded-xl border border-[#d6dbd4] p-4 transition-all hover:border-[#3c9f95] has-[:checked]:border-[#3c9f95] has-[:checked]:bg-[#3c9f95]/5">
+              <input
+                type="radio"
+                name="ownership_scope"
+                value="personal"
+                checked={formData.ownership_scope === "personal"}
+                onChange={() => setFormData((prev) => ({ ...prev, ownership_scope: "personal" }))}
+                className="h-4 w-4 accent-[#3c9f95]"
+              />
+              <div className="flex-1">
+                <span className="block text-sm font-semibold text-[#1a3a2a]">Personal</span>
+                <span className="text-xs text-[#5c6d66]">Only you can use and manage this avatar</span>
+              </div>
+            </label>
+            <label className="flex cursor-pointer items-center gap-4 rounded-xl border border-[#d6dbd4] p-4 transition-all hover:border-[#3c9f95] has-[:checked]:border-[#3c9f95] has-[:checked]:bg-[#3c9f95]/5">
+              <input
+                type="radio"
+                name="ownership_scope"
+                value="org"
+                checked={formData.ownership_scope === "org"}
+                onChange={() => setFormData((prev) => ({ ...prev, ownership_scope: "org" }))}
+                className="h-4 w-4 accent-[#3c9f95]"
+              />
+              <div className="flex-1">
+                <span className="block text-sm font-semibold text-[#1a3a2a]">Organisational</span>
+                <span className="text-xs text-[#5c6d66]">Available to your organisation members</span>
+              </div>
+            </label>
+            <label className="flex cursor-pointer items-center gap-4 rounded-xl border border-[#d6dbd4] p-4 transition-all hover:border-[#3c9f95] has-[:checked]:border-[#3c9f95] has-[:checked]:bg-[#3c9f95]/5">
+              <input
+                type="radio"
+                name="ownership_scope"
+                value="public"
+                checked={formData.ownership_scope === "public"}
+                onChange={() => setFormData((prev) => ({ ...prev, ownership_scope: "public" }))}
+                className="h-4 w-4 accent-[#3c9f95]"
+              />
+              <div className="flex-1">
+                <span className="block text-sm font-semibold text-[#1a3a2a]">Public</span>
+                <span className="text-xs text-[#5c6d66]">Available in Other Avatars for anyone to clone</span>
+              </div>
+            </label>
           </div>
         </section>
       </div>

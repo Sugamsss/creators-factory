@@ -60,15 +60,21 @@ export default function AvatarsAllPage() {
 
   const controls = useMemo(
     () => (
-      <div className="mb-6 flex flex-wrap gap-3">
-        <SearchBar value={search} onChange={setSearch} placeholder="Search by name or description" className="min-w-[240px]" />
+      <div className="mb-6 flex flex-wrap items-center gap-3">
+        <SearchBar
+          value={search}
+          onChange={setSearch}
+          placeholder="Search..."
+          className="min-w-[160px]"
+          inputClassName="py-2.5 pl-10 pr-4 text-[10px] font-bold uppercase tracking-widest bg-white/80 border-[#d6dbd4]"
+        />
 
         <select
           value={sourceType}
           onChange={(event) => setSourceType(event.target.value as "" | "original" | "clone")}
-          className="rounded-lg border border-border px-3 py-2 text-sm"
+          className="rounded-2xl border border-[#d6dbd4] bg-white/80 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-[#5c6d66]"
         >
-          <option value="">All Sources</option>
+          <option value="">Source</option>
           <option value="original">Original</option>
           <option value="clone">Cloned</option>
         </select>
@@ -76,9 +82,9 @@ export default function AvatarsAllPage() {
         <select
           value={visibility}
           onChange={(event) => setVisibility(event.target.value as "" | "public" | "private")}
-          className="rounded-lg border border-border px-3 py-2 text-sm"
+          className="rounded-2xl border border-[#d6dbd4] bg-white/80 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-[#5c6d66]"
         >
-          <option value="">All Visibility</option>
+          <option value="">Visibility</option>
           <option value="public">Public</option>
           <option value="private">Private</option>
         </select>
@@ -88,9 +94,9 @@ export default function AvatarsAllPage() {
           onChange={(event) =>
             setDeploymentSummary(event.target.value as "" | AvatarDeploymentSummary)
           }
-          className="rounded-lg border border-border px-3 py-2 text-sm"
+          className="rounded-2xl border border-[#d6dbd4] bg-white/80 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-[#5c6d66]"
         >
-          <option value="">All Deployment States</option>
+          <option value="">Status</option>
           <option value="not_in_use">Not In Use</option>
           <option value="in_use">In Use</option>
           <option value="partially_paused">Partially Paused</option>
@@ -102,12 +108,12 @@ export default function AvatarsAllPage() {
           onChange={(event) =>
             setSort(event.target.value as "newest" | "oldest" | "recently_edited" | "alphabetical")
           }
-          className="rounded-lg border border-border px-3 py-2 text-sm"
+          className="rounded-2xl border border-[#d6dbd4] bg-white/80 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-[#5c6d66]"
         >
-          <option value="newest">Newest</option>
-          <option value="oldest">Oldest</option>
-          <option value="recently_edited">Recently Edited</option>
-          <option value="alphabetical">Alphabetical</option>
+          <option value="newest">New</option>
+          <option value="oldest">Old</option>
+          <option value="recently_edited">Recent</option>
+          <option value="alphabetical">A-Z</option>
         </select>
       </div>
     ),

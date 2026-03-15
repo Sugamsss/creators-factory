@@ -4,14 +4,11 @@ import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AvatarCard, LoadMoreButton } from "@/shared/ui";
 import { SearchBar } from "@/shared/ui/search-bar";
-import { IndustryDropdown } from "@/shared/ui/industry-dropdown";
-import { SortTabs } from "@/shared/ui/sort-tabs";
 import { PageContainer, PageHeader, SectionHeading } from "@/shared/ui/layout";
 import { buildLoginPath, useAuth } from "@/features/auth";
 import { useAvatars } from "@/features/avatars/hooks";
 import {
   cloneAvatar,
-  createAvatarDraft,
   deleteAvatar,
   deployAvatar,
   listAutomations,
@@ -186,6 +183,37 @@ function DeleteModal({
   );
 }
 
+function DeleteSuccessModal({
+  avatarName,
+  onClose,
+}: {
+  avatarName: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl" role="dialog" aria-modal="true">
+        <div className="flex flex-col items-center text-center">
+          <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
+            <span className="material-symbols-outlined !text-[32px] text-green-600">check_circle</span>
+          </div>
+          <h3 className="font-display text-2xl text-ink-heavy">Avatar Deleted</h3>
+          <p className="mt-3 text-sm text-muted">
+            <span className="font-semibold text-ink">{avatarName || "Avatar"}</span> has been moved to the recycle bin.
+          </p>
+          <p className="mt-2 text-xs text-muted">You can restore it within 10 days.</p>
+          <button
+            onClick={onClose}
+            className="mt-6 w-full rounded-full bg-brand px-6 py-3 text-[11px] font-bold uppercase tracking-widest text-white transition-all hover:bg-brand-hover"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AvatarsPage() {
   const router = useRouter();
   const { isAuthenticated } = useAuth();
@@ -194,7 +222,6 @@ export default function AvatarsPage() {
     myAvatars,
     orgAvatars,
     exploreAvatars,
-    industries,
     isLoading,
     error,
     isLoadingMore,
@@ -211,44 +238,59 @@ export default function AvatarsPage() {
   const safeExploreAvatars = Array.isArray(exploreAvatars) ? exploreAvatars : [];
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedIndustry, setSelectedIndustry] = useState<number | undefined>();
-  const [sortBy, setSortBy] = useState<"featured" | "popular" | "newest">("featured");
-
+  const [sortBy, setSortBy] = useState<"featured" | "popular" | "newest">(
+    "newest"
+  );
+  const [sortOpen, setSortOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filters, setFilters] = useState({
+    gender: "",
+    ageRange: "",
+    industry: "",
+  });
   const [busyAvatarId, setBusyAvatarId] = useState<number | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [deletedAvatarName, setDeletedAvatarName] = useState<string | null>(null);
+  const [deleteAvatarTarget, setDeleteAvatarTarget] =
+    useState<AvatarCardModel | null>(null);
 
-  const [deployAvatarTarget, setDeployAvatarTarget] = useState<AvatarCardModel | null>(null);
-  const [pauseAvatarTarget, setPauseAvatarTarget] = useState<AvatarCardModel | null>(null);
-  const [deleteAvatarTarget, setDeleteAvatarTarget] = useState<AvatarCardModel | null>(null);
+  // Deployment/Pause States
+  const [deployAvatarTarget, setDeployAvatarTarget] =
+    useState<AvatarCardModel | null>(null);
+  const [pauseAvatarTarget, setPauseAvatarTarget] =
+    useState<AvatarCardModel | null>(null);
   const [automations, setAutomations] = useState<AutomationOption[]>([]);
   const [selectedAutomationIds, setSelectedAutomationIds] = useState<number[]>([]);
-  const [deployConfirmReplace, setDeployConfirmReplace] = useState(false);
-
   const [isDialogLoading, setIsDialogLoading] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
+  const [deployConfirmReplace, setDeployConfirmReplace] = useState(false);
 
-  const resetDialogState = () => {
+  const resetDialogState = useCallback(() => {
     setAutomations([]);
     setSelectedAutomationIds([]);
-    setDeployConfirmReplace(false);
+    setIsDialogLoading(false);
     setDialogError(null);
-  };
+    setDeployConfirmReplace(false);
+  }, []);
 
   const openDeploy = useCallback(async (avatar: AvatarCardModel) => {
     setDeployAvatarTarget(avatar);
     setPauseAvatarTarget(null);
     resetDialogState();
+
     setIsDialogLoading(true);
     try {
       const data = await listAutomations();
       setAutomations(
-        data.map((item) => ({
-          id: item.id,
-          name: item.name,
-          status: item.status,
-          avatar_id: item.avatar_id,
-        }))
+        data
+          .filter((item) => item.avatar_id === avatar.id)
+          .map((item) => ({
+            id: item.id,
+            name: item.name,
+            status: item.status,
+            avatar_id: item.avatar_id,
+          }))
       );
     } catch (openError) {
       setDialogError(openError instanceof Error ? openError.message : "Failed to load automations");
@@ -302,28 +344,12 @@ export default function AvatarsPage() {
       void fetchExploreWithParams(
         {
           search: value || undefined,
-          industryId: selectedIndustry,
           sort: sortBy,
         },
         true
       );
     },
-    [fetchExploreWithParams, selectedIndustry, sortBy]
-  );
-
-  const handleIndustryChange = useCallback(
-    (industryId: number | undefined) => {
-      setSelectedIndustry(industryId);
-      void fetchExploreWithParams(
-        {
-          search: searchQuery || undefined,
-          industryId,
-          sort: sortBy,
-        },
-        true
-      );
-    },
-    [fetchExploreWithParams, searchQuery, sortBy]
+    [fetchExploreWithParams, sortBy]
   );
 
   const handleSortChange = useCallback(
@@ -332,13 +358,12 @@ export default function AvatarsPage() {
       void fetchExploreWithParams(
         {
           search: searchQuery || undefined,
-          industryId: selectedIndustry,
           sort,
         },
         true
       );
     },
-    [fetchExploreWithParams, searchQuery, selectedIndustry]
+    [fetchExploreWithParams, searchQuery]
   );
 
   const handleCreate = async () => {
@@ -356,23 +381,13 @@ export default function AvatarsPage() {
     }
   };
 
-  const handleCreateOrgDraft = async () => {
-    setActionError(null);
-    try {
-      const draft = await createAvatarDraft("org");
-      router.push(`/avatars/create/${draft.id}`);
-    } catch (createError) {
-      setActionError(createError instanceof Error ? createError.message : "Failed to create org avatar");
-    }
-  };
-
   const handleDelete = async (avatar: AvatarCardModel) => {
     setBusyAvatarId(avatar.id);
     setActionError(null);
     try {
       await deleteAvatar(avatar.id);
       setDeleteAvatarTarget(null);
-      setNotice("Avatar deleted. It can be restored from recycle bin within 10 days.");
+      setDeletedAvatarName(avatar.name || "Untitled Avatar");
       await refetch();
     } catch (deleteError) {
       setActionError(deleteError instanceof Error ? deleteError.message : "Failed to delete avatar");
@@ -450,25 +465,143 @@ export default function AvatarsPage() {
     }
   };
 
-  const exploreControls = useMemo(
-    () => (
+  const exploreControls = useMemo(() => {
+    const sortLabel: Record<"featured" | "popular" | "newest", string> = {
+      featured: "Recommendations",
+      popular: "Most Popular",
+      newest: "New",
+    };
+
+    const handleSortClick = () => setSortOpen((prev) => !prev);
+    const handleFilterClick = () => setFilterOpen((prev) => !prev);
+
+    const handleSortSelect = (sort: "featured" | "popular" | "newest") => {
+      setSortBy(sort);
+      setSortOpen(false);
+      void fetchExploreWithParams(
+        {
+          search: searchQuery || undefined,
+          sort,
+        },
+        true
+      );
+    };
+
+    const handleFilterApply = () => {
+      setFilterOpen(false);
+      void fetchExploreWithParams(
+        {
+          search: searchQuery || undefined,
+          sort: sortBy,
+          gender: filters.gender || undefined,
+          ageRange: filters.ageRange || undefined,
+          industry: filters.industry || undefined,
+        },
+        true
+      );
+    };
+
+    return (
       <div className="flex flex-wrap items-center gap-3">
         <SearchBar
-          placeholder="Search avatars"
+          placeholder="Search..."
           value={searchQuery}
           onChange={handleSearchChange}
-          className="min-w-[220px]"
+          className="min-w-[160px]"
+          inputClassName="py-2.5 pl-10 pr-4 text-[10px] font-bold uppercase tracking-widest bg-white/80 border-[#d6dbd4]"
         />
-        <IndustryDropdown
-          industries={Array.isArray(industries) ? industries : []}
-          selectedIndustryId={selectedIndustry}
-          onSelect={handleIndustryChange}
-        />
-        <SortTabs selected={sortBy} onChange={handleSortChange} />
+        
+        {/* Sort Button */}
+        <div className="relative">
+          <button
+            onClick={handleSortClick}
+            className="flex items-center gap-2 rounded-2xl border border-[#d6dbd4] bg-white/80 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-[#5c6d66] backdrop-blur-sm transition-all hover:border-brand hover:text-brand"
+          >
+            <span className="material-symbols-outlined !text-[14px]">swap_vert</span>
+            {sortLabel[sortBy]}
+          </button>
+          {sortOpen && (
+            <div className="absolute right-0 top-full z-50 mt-1.5 min-w-[160px] overflow-hidden rounded-xl border border-[#d6dbd4] bg-white shadow-lg">
+              {(["newest", "popular", "featured"] as const).map((option) => (
+                <button
+                  key={option}
+                  onClick={() => handleSortSelect(option)}
+                  className={`w-full px-4 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+                    sortBy === option
+                      ? "bg-brand/10 text-brand"
+                      : "text-[#5c6d66] hover:bg-gray-50"
+                  }`}
+                >
+                  {sortLabel[option]}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Filter Button */}
+        <div className="relative">
+          <button
+            onClick={handleFilterClick}
+            className="flex items-center gap-2 rounded-2xl border border-[#d6dbd4] bg-white/80 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-[#5c6d66] backdrop-blur-sm transition-all hover:border-brand hover:text-brand"
+          >
+            <span className="material-symbols-outlined !text-[14px]">tune</span>
+            Filter
+          </button>
+          {filterOpen && (
+            <div className="absolute right-0 top-full z-50 mt-1.5 w-56 rounded-xl border border-[#d6dbd4] bg-white p-4 shadow-lg">
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1.5 block text-[9px] font-bold uppercase tracking-widest text-[#8ca1c5]">Gender</label>
+                  <select
+                    value={filters.gender}
+                    onChange={(e) => setFilters((prev) => ({ ...prev, gender: e.target.value }))}
+                    className="w-full rounded-lg border border-[#d6dbd4] bg-[#fafcfb] px-3 py-2 text-xs font-medium text-[#1a3a2a]"
+                  >
+                    <option value="">All Genders</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-[9px] font-bold uppercase tracking-widest text-[#8ca1c5]">Age Range</label>
+                  <select
+                    value={filters.ageRange}
+                    onChange={(e) => setFilters((prev) => ({ ...prev, ageRange: e.target.value }))}
+                    className="w-full rounded-lg border border-[#d6dbd4] bg-[#fafcfb] px-3 py-2 text-xs font-medium text-[#1a3a2a]"
+                  >
+                    <option value="">All Ages</option>
+                    <option value="18-25">18-25</option>
+                    <option value="26-35">26-35</option>
+                    <option value="36-45">36-45</option>
+                    <option value="46-55">46-55</option>
+                    <option value="55+">55+</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-[9px] font-bold uppercase tracking-widest text-[#8ca1c5]">Industry</label>
+                  <input
+                    type="text"
+                    placeholder="Enter industry..."
+                    value={filters.industry}
+                    onChange={(e) => setFilters((prev) => ({ ...prev, industry: e.target.value }))}
+                    className="w-full rounded-lg border border-[#d6dbd4] bg-[#fafcfb] px-3 py-2 text-xs font-medium text-[#1a3a2a] placeholder:text-[#8ca1c5]/50"
+                  />
+                </div>
+                <button
+                  onClick={handleFilterApply}
+                  className="w-full rounded-lg bg-brand px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-white transition-all hover:bg-brand-hover"
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
-    ),
-    [handleIndustryChange, handleSearchChange, handleSortChange, industries, searchQuery, selectedIndustry, sortBy]
-  );
+    );
+  }, [searchQuery, sortBy, sortOpen, filterOpen, filters, handleSearchChange, fetchExploreWithParams]);
 
   return (
     <PageContainer>
@@ -478,21 +611,6 @@ export default function AvatarsPage() {
         action={{ icon: "add_circle", label: "Create Avatar", onClick: handleCreate }}
       />
 
-      <div className="mb-6 flex gap-3">
-        <button
-          onClick={handleCreateOrgDraft}
-          className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-ink"
-        >
-          Create Org Avatar
-        </button>
-        <button
-          onClick={() => router.push("/avatars/all")}
-          className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-ink"
-        >
-          View All Personal Avatars
-        </button>
-      </div>
-
       {(error || actionError) && (
         <div className="mb-6 rounded-xl bg-red-50 p-4 text-sm text-red-600">{error || actionError}</div>
       )}
@@ -500,7 +618,7 @@ export default function AvatarsPage() {
 
       <section className="mb-12">
         <SectionHeading title="Continue Creation" description="Resume incomplete drafts" />
-        <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin">
+        <div className="flex gap-4 overflow-x-auto pb-8 pl-6 pt-6 scrollbar-thin -mx-6">
           {safeDrafts.map((avatar) => (
             <AvatarCard
               key={avatar.id}
@@ -529,8 +647,20 @@ export default function AvatarsPage() {
       </section>
 
       <section className="mb-12">
-        <SectionHeading title="My Avatars" description="Completed personal avatars" />
-        <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin">
+        <SectionHeading
+          title="My Avatars"
+          description="Completed personal avatars"
+          rightControls={
+            <button
+              onClick={() => router.push("/avatars/all")}
+              className="flex items-center gap-2 rounded-full bg-brand px-6 py-2.5 text-[10px] font-bold uppercase tracking-widest text-white shadow-lg shadow-brand/20 transition-all hover:bg-brand-hover hover:shadow-xl"
+            >
+              View All
+              <span className="material-symbols-outlined !text-[16px]">arrow_forward</span>
+            </button>
+          }
+        />
+        <div className="flex gap-4 overflow-x-auto pb-8 pl-6 pt-6 scrollbar-thin -mx-6">
           {safeMyAvatars.map((avatar) => {
             const deploymentSummary =
               typeof avatar.deployment_summary === "string" ? avatar.deployment_summary : null;
@@ -566,8 +696,20 @@ export default function AvatarsPage() {
       </section>
 
       <section className="mb-12">
-        <SectionHeading title="Organisational Avatars" description="Shared team avatars" />
-        <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin">
+        <SectionHeading
+          title="Organisational Avatars"
+          description="Shared team avatars"
+          rightControls={
+            <button
+              onClick={() => router.push("/avatars/all")}
+              className="flex items-center gap-2 rounded-full bg-brand px-6 py-2.5 text-[10px] font-bold uppercase tracking-widest text-white shadow-lg shadow-brand/20 transition-all hover:bg-brand-hover hover:shadow-xl"
+            >
+              View All
+              <span className="material-symbols-outlined !text-[16px]">arrow_forward</span>
+            </button>
+          }
+        />
+        <div className="flex gap-4 overflow-x-auto pb-8 pl-6 pt-6 scrollbar-thin -mx-6">
           {safeOrgAvatars.map((avatar) => {
             const deploymentSummary =
               typeof avatar.deployment_summary === "string" ? avatar.deployment_summary : null;
@@ -671,6 +813,13 @@ export default function AvatarsPage() {
           loading={busyAvatarId === deleteAvatarTarget.id}
           onConfirm={() => void handleDelete(deleteAvatarTarget)}
           onClose={() => setDeleteAvatarTarget(null)}
+        />
+      )}
+
+      {deletedAvatarName && (
+        <DeleteSuccessModal
+          avatarName={deletedAvatarName}
+          onClose={() => setDeletedAvatarName(null)}
         />
       )}
     </PageContainer>
