@@ -1,0 +1,179 @@
+
+> frontend@0.1.0 dev /Users/sugam/Personal Projects/Creators Factory/frontend
+> next dev
+
+   ▲ Next.js 15.1.0
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.1.6:3000
+
+ ✓ Starting...
+ ✓ Ready in 1161ms
+ ✓ Compiled /src/middleware in 92ms (99 modules)
+ ○ Compiling / ...
+ ✓ Compiled / in 1044ms (705 modules)
+ GET / 307 in 1175ms
+ ✓ Compiled in 179ms (343 modules)
+ ✓ Compiled in 22ms (329 modules)
+ GET / 307 in 20ms
+ ○ Compiling /login ...
+ ✓ Compiled /login in 748ms (1516 modules)
+ GET /login?next=%2Fdashboard 200 in 853ms
+(node:84938) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ○ Compiling /dashboard ...
+ ✓ Compiled /dashboard in 546ms (1609 modules)
+ GET /dashboard 200 in 599ms
+ GET /dashboard 200 in 3ms
+ ○ Compiling /avatars ...
+ ✓ Compiled /avatars in 554ms (1681 modules)
+ GET /avatars 200 in 714ms
+ ✓ Compiled in 500ms (1680 modules)
+ GET /avatars 200 in 56ms
+ GET /login?next=%2Favatars%2Fcreate%2F14 200 in 22ms
+ GET /login?next=%2Favatars%2Fcreate%2F14 200 in 8ms
+ GET /login?next=%2Favatars%2Fcreate%2F14 200 in 5ms
+ ✓ Compiled /avatars/create/[draftId] in 460ms (1680 modules)
+ GET /avatars/create/14 200 in 800ms
+ ⨯ ./src/features/avatars/services/avatarApi.ts
+Error: Failed to read source code from /Users/sugam/Personal Projects/Creators Factory/frontend/src/features/avatars/services/avatarApi.ts
+
+Caused by:
+    No such file or directory (os error 2)
+
+Import trace for requested module:
+./src/features/avatars/services/avatarApi.ts
+./src/app/(app)/avatars/page.tsx
+ ✓ Compiled in 398ms (1694 modules)
+ GET /avatars/create/14 200 in 61ms
+ ✓ Compiled in 152ms (833 modules)
+ GET /avatars/create/14 200 in 8ms
+ ✓ Compiled in 344ms (1694 modules)
+ GET /avatars/create/14 200 in 43ms
+Failed to proxy http://localhost:8000/api/v1/avatars/14 [Error: socket hang up] { code: 'ECONNRESET' }
+[Error: socket hang up] { code: 'ECONNRESET' }
+Failed to proxy http://localhost:8000/api/v1/avatars/14/attachments [Error: socket hang up] { code: 'ECONNRESET' }
+[Error: socket hang up] { code: 'ECONNRESET' }
+Failed to proxy http://localhost:8000/api/v1/avatars/14/visual-versions [Error: socket hang up] { code: 'ECONNRESET' }
+[Error: socket hang up] { code: 'ECONNRESET' }
+ ✓ Compiled /_error in 333ms (1926 modules)
+ GET /avatars/create/14 200 in 288ms
+ GET /avatars/create/14 200 in 4ms
+ ✓ Compiled in 333ms (1940 modules)
+ GET /avatars/create/14 200 in 45ms
+ ✓ Compiled in 489ms (1940 modules)
+ GET /avatars/create/14 200 in 31ms
+ ✓ Compiled in 351ms (1940 modules)
+ GET /avatars/create/14 200 in 38ms
+Failed to proxy http://localhost:8000/api/v1/avatars/14 [Error: socket hang up] { code: 'ECONNRESET' }
+[Error: socket hang up] { code: 'ECONNRESET' }
+Failed to proxy http://localhost:8000/api/v1/avatars/14/attachments [Error: socket hang up] { code: 'ECONNRESET' }
+[Error: socket hang up] { code: 'ECONNRESET' }
+Failed to proxy http://localhost:8000/api/v1/avatars/14/visual-versions [Error: socket hang up] { code: 'ECONNRESET' }
+[Error: socket hang up] { code: 'ECONNRESET' }
+ ✓ Compiled in 390ms (1940 modules)
+ GET /avatars/create/14 200 in 33ms
+ ✓ Compiled in 519ms (1940 modules)
+ GET /avatars/create/14 200 in 51ms
+ ✓ Compiled in 297ms (1940 modules)
+ GET /avatars/create/14 200 in 43ms
+ ✓ Compiled in 369ms (1938 modules)
+ GET /avatars/create/14 200 in 32ms
+ ✓ Compiled in 381ms (1938 modules)
+ GET /avatars/create/14 200 in 32ms
+ ✓ Compiled in 299ms (1938 modules)
+ GET /avatars/create/14 200 in 49ms
+ ⨯ ./src/features/avatars/components/creation/CreationWorkspace.tsx
+Error: Failed to read source code from /Users/sugam/Personal Projects/Creators Factory/frontend/src/features/avatars/components/creation/CreationWorkspace.tsx
+
+Caused by:
+    No such file or directory (os error 2)
+
+Import trace for requested module:
+./src/features/avatars/components/creation/CreationWorkspace.tsx
+ ⨯ ./src/features/avatars/components/creation/CreationWorkspace.tsx
+Error: Failed to read source code from /Users/sugam/Personal Projects/Creators Factory/frontend/src/features/avatars/components/creation/CreationWorkspace.tsx
+
+Caused by:
+    No such file or directory (os error 2)
+
+Import trace for requested module:
+./src/features/avatars/components/creation/CreationWorkspace.tsx
+./src/app/(app)/avatars/create/[draftId]/page.tsx
+ ⨯ ./src/features/avatars/components/creation/CreationWorkspace.tsx
+Error: Failed to read source code from /Users/sugam/Personal Projects/Creators Factory/frontend/src/features/avatars/components/creation/CreationWorkspace.tsx
+
+Caused by:
+    No such file or directory (os error 2)
+
+Import trace for requested module:
+./src/features/avatars/components/creation/CreationWorkspace.tsx
+./src/app/(app)/avatars/create/[draftId]/page.tsx
+ GET /avatars/create/14 500 in 506ms
+ GET /avatars/create/14 500 in 3ms
+ ○ Compiling /_error ...
+ ✓ Compiled /_not-found in 672ms (1930 modules)
+ GET /avatars/create/14 200 in 90ms
+ ⨯ ./src/features/avatars/components/creation/PersonalityStep.tsx
+Error: Failed to read source code from /Users/sugam/Personal Projects/Creators Factory/frontend/src/features/avatars/components/creation/PersonalityStep.tsx
+
+Caused by:
+    No such file or directory (os error 2)
+
+Import trace for requested module:
+./src/features/avatars/components/creation/PersonalityStep.tsx
+./src/features/avatars/components/creation/CreationWorkspace.tsx
+ ⨯ ./src/features/avatars/components/creation/PersonalityStep.tsx
+Error: Failed to read source code from /Users/sugam/Personal Projects/Creators Factory/frontend/src/features/avatars/components/creation/PersonalityStep.tsx
+
+Caused by:
+    No such file or directory (os error 2)
+
+Import trace for requested module:
+./src/features/avatars/components/creation/PersonalityStep.tsx
+./src/features/avatars/components/creation/CreationWorkspace.tsx
+ ✓ Compiled in 381ms (1944 modules)
+ GET /avatars/create/14 200 in 49ms
+ ✓ Compiled in 272ms (1940 modules)
+ GET /avatars/create/14 200 in 37ms
+ ✓ Compiled in 550ms (1940 modules)
+ GET /avatars/create/14 200 in 36ms
+ ✓ Compiled in 500ms (1940 modules)
+ GET /avatars/create/14 200 in 34ms
+ ✓ Compiled in 395ms (1940 modules)
+ GET /avatars/create/14 200 in 36ms
+ ✓ Compiled in 296ms (1940 modules)
+ GET /avatars/create/14 200 in 38ms
+ ✓ Compiled in 305ms (1940 modules)
+ GET /avatars/create/14 200 in 35ms
+ ✓ Compiled in 384ms (1940 modules)
+ GET /avatars/create/14 200 in 35ms
+ ✓ Compiled in 213ms (1034 modules)
+ GET /avatars/create/14 200 in 8ms
+ ✓ Compiled in 299ms (1034 modules)
+ GET /avatars/create/14 200 in 19ms
+ ✓ Compiled in 357ms (1940 modules)
+ GET /avatars/create/14 200 in 47ms
+ ✓ Compiled in 291ms (1034 modules)
+ GET /avatars/create/14 200 in 7ms
+ ✓ Compiled in 176ms (1034 modules)
+ GET /avatars/create/14 200 in 7ms
+ ✓ Compiled in 506ms (1940 modules)
+ GET /avatars/create/14 200 in 50ms
+ ✓ Compiled in 301ms (1940 modules)
+ GET /avatars/create/14 200 in 36ms
+ ✓ Compiled in 238ms (1940 modules)
+ GET /avatars/create/14 200 in 38ms
+ ✓ Compiled in 352ms (1940 modules)
+ GET /avatars/create/14 200 in 31ms
+ ✓ Compiled in 395ms (1940 modules)
+ GET /avatars/create/14 200 in 31ms
+ ✓ Compiled in 438ms (1940 modules)
+ GET /avatars/create/14 200 in 39ms
+ ✓ Compiled in 423ms (1940 modules)
+ GET /avatars/create/14 200 in 32ms
+ ✓ Compiled in 297ms (1940 modules)
+ GET /avatars/create/14 200 in 30ms
+ ✓ Compiled in 435ms (1940 modules)
+ GET /avatars/create/14 200 in 30ms
+ ✓ Compiled in 392ms (1940 modules)
+ GET /avatars/create/14 200 in 30ms

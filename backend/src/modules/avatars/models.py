@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     ForeignKey,
     Enum as SQLEnum,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -124,6 +125,9 @@ class Avatar(Base):  # type: ignore[misc]
 
 class VisualVersion(Base):
     __tablename__ = "visual_versions"
+    __table_args__ = (
+        UniqueConstraint("avatar_id", "version_number", name="uq_visual_avatar_version"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     avatar_id = Column(Integer, ForeignKey("avatars.id"), nullable=False, index=True)
@@ -151,6 +155,9 @@ class VisualVersion(Base):
 
 class ReferenceSlot(Base):
     __tablename__ = "reference_slots"
+    __table_args__ = (
+        UniqueConstraint("avatar_id", "slot_key", name="uq_reference_slot_avatar_key"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     avatar_id = Column(Integer, ForeignKey("avatars.id"), nullable=False, index=True)
@@ -244,3 +251,13 @@ class AvatarAttachment(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     avatar = relationship("Avatar", back_populates="attachments")
+
+
+class AvatarEvent(Base):
+    __tablename__ = "avatar_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    avatar_id = Column(Integer, ForeignKey("avatars.id"), nullable=False, index=True)
+    event_type = Column(String(120), nullable=False, index=True)
+    payload_json = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)

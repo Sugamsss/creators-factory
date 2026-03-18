@@ -155,10 +155,16 @@ Auth transport in the browser is same-origin only (`/api/v1/*` via Next.js rewri
 ### Avatars
 - `GET /api/v1/avatars` - List user avatars
 - `POST /api/v1/avatars/drafts` - Create avatar draft (canonical)
-- `POST /api/v1/avatars` - Create avatar draft (legacy alias)
+- `POST /api/v1/avatars` - Create avatar draft (alias, parity with docs)
 - `GET /api/v1/avatars/:id` - Get avatar
+- `GET /api/v1/avatars/:id/readiness` - Server-backed step readiness and blockers
 - `PATCH /api/v1/avatars/:id` - Update avatar
 - `DELETE /api/v1/avatars/:id` - Delete avatar
+- `POST /api/v1/avatars/:id/generate-base` - Queue base generation (`accepted`, `operation_id`, `avatar_id`, `started_at`)
+- `POST /api/v1/avatars/:id/edit-base` - Queue base edit generation (same async envelope)
+- `POST /api/v1/avatars/:id/generate-references` - Queue 15-slot reference generation (same async envelope)
+- `POST /api/v1/avatars/:id/train-lora` - Queue LoRA training (same async envelope)
+- `POST /api/v1/avatars/:id/retry-lora` - Queue LoRA retry (same async envelope)
 
 ### Industries
 - `GET /api/v1/industries` - List industries

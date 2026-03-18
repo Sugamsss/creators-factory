@@ -51,6 +51,7 @@ class Settings(BaseSettings):
 
     # fal.ai
     FAL_API_KEY: str = ""
+    FAL_KEY: str = ""
 
     class Config:
         env_file = ".env"

@@ -2,9 +2,9 @@ import { apiRequest } from "@/shared/lib/api-client";
 import type {
   Attachment,
   AvatarDetailModel,
+  AvatarIndustry,
   AvatarsAllResponse,
   AvatarsHubResponse,
-  AvatarIndustry,
   BindingActionResponse,
   ExploreResponse,
 } from "../types";
@@ -33,36 +33,7 @@ export interface ReferenceSlot {
   created_at: string;
 }
 
-export interface GenerationPayload {
-  prompt: string;
-  model: "openai_image_1_5" | "google_nano_banana_2" | "seedream_v5";
-  aspect_ratio: "1:1" | "3:4" | "4:3" | "9:16" | "16:9";
-  age: number;
-}
-
-export interface EditGenerationPayload extends GenerationPayload {
-  reference_image_urls?: string[] | null;
-  mask_image_url?: string | null;
-}
-
-export interface GenerationResponse {
-  version_id: number;
-  version_number: number;
-  image_url: string;
-  prompt: string;
-  model: string;
-  aspect_ratio: string;
-}
-
-export interface AutomationBindingItem {
-  id: number;
-  avatar_id: number;
-  name: string;
-  schedule: string | null;
-  status: "active" | "paused";
-  videos_generated: number;
-  last_run: string | null;
-}
+export type OwnershipScope = "personal" | "org";
 
 export interface PersonalityPayload {
   backstory?: string;
@@ -77,8 +48,6 @@ export interface PersonalityPayload {
   tone_tags?: string[];
 }
 
-export type OwnershipScope = "personal" | "org" | "public";
-
 export interface AvatarUpdatePayload {
   name?: string | null;
   age?: number | null;
@@ -87,10 +56,9 @@ export interface AvatarUpdatePayload {
   communication_principles?: string[];
   industry_id?: number | null;
   role_paragraph?: string | null;
-  active_card_image_url?: string | null;
   personality_payload?: PersonalityPayload;
+  command?: "save_draft" | "save_and_exit" | "complete_avatar";
   complete_avatar?: boolean;
-  ownership_scope?: OwnershipScope;
 }
 
 export interface ToggleVisibilityPayload {
@@ -108,6 +76,58 @@ export interface PausePayload {
   automation_ids?: number[];
 }
 
+export interface AutomationBindingItem {
+  id: number;
+  avatar_id: number;
+  name: string;
+  schedule: string | null;
+  status: "active" | "paused";
+  videos_generated: number;
+  last_run: string | null;
+}
+
+export interface GenerationPayload {
+  prompt: string;
+  model: "openai_image_1_5" | "google_nano_banana_2" | "seedream_v5";
+  aspect_ratio: "1:1" | "3:4" | "4:3" | "9:16" | "16:9";
+  age: number;
+}
+
+export interface EditGenerationPayload extends GenerationPayload {
+  reference_image_urls?: string[] | null;
+  mask_image_url?: string | null;
+}
+
+export interface AsyncAcceptedResponse {
+  accepted: boolean;
+  operation_id: string;
+  avatar_id: number;
+  operation:
+    | "generate_base"
+    | "edit_base"
+    | "generate_references"
+    | "train_lora"
+    | "retry_lora";
+  started_at: string;
+}
+
+export interface StepReadiness {
+  step_id: number;
+  step_name: string;
+  is_complete: boolean;
+  can_enter: boolean;
+  blocked_reasons: string[];
+}
+
+export interface AvatarReadinessResponse {
+  avatar_id: number;
+  build_state: AvatarDetailModel["build_state"];
+  current_step: number;
+  can_complete_avatar: boolean;
+  completion_blockers: string[];
+  steps: StepReadiness[];
+}
+
 export async function createAvatarDraft(
   ownershipScope: OwnershipScope = "personal",
   orgId?: number
@@ -123,6 +143,10 @@ export async function createAvatarDraft(
 
 export async function getAvatarsHub(): Promise<AvatarsHubResponse> {
   return apiRequest<AvatarsHubResponse>("/avatars");
+}
+
+export async function listAvatarIndustries(): Promise<AvatarIndustry[]> {
+  return apiRequest<AvatarIndustry[]>("/industries");
 }
 
 export async function getAllAvatars(options: {
@@ -145,18 +169,14 @@ export async function getAllAvatars(options: {
 export async function getExploreAvatars(options: {
   search?: string;
   sort?: "featured" | "popular" | "newest";
-  gender?: string;
-  ageRange?: string;
-  industry?: string;
+  industryId?: number;
   cursor?: string;
   limit?: number;
 } = {}): Promise<ExploreResponse> {
   const params = new URLSearchParams();
   if (options.search) params.set("search", options.search);
   if (options.sort) params.set("sort", options.sort);
-  if (options.gender) params.set("gender", options.gender);
-  if (options.ageRange) params.set("age_range", options.ageRange);
-  if (options.industry) params.set("industry", options.industry);
+  if (typeof options.industryId === "number") params.set("industry_id", String(options.industryId));
   if (options.cursor) params.set("cursor", options.cursor);
   if (options.limit) params.set("limit", options.limit.toString());
   return apiRequest<ExploreResponse>(`/avatars/explore?${params.toString()}`);
@@ -164,6 +184,10 @@ export async function getExploreAvatars(options: {
 
 export async function getAvatar(avatarId: number): Promise<AvatarDetailModel> {
   return apiRequest<AvatarDetailModel>(`/avatars/${avatarId}`);
+}
+
+export async function getAvatarReadiness(avatarId: number): Promise<AvatarReadinessResponse> {
+  return apiRequest<AvatarReadinessResponse>(`/avatars/${avatarId}/readiness`);
 }
 
 export async function updateAvatar(
@@ -234,8 +258,8 @@ export async function generateBaseImage(
   avatarId: string,
   payload: GenerationPayload,
   signal?: AbortSignal
-): Promise<GenerationResponse> {
-  return apiRequest<GenerationResponse>(`/avatars/${avatarId}/generate-base`, {
+): Promise<AsyncAcceptedResponse> {
+  return apiRequest<AsyncAcceptedResponse>(`/avatars/${avatarId}/generate-base`, {
     method: "POST",
     body: JSON.stringify(payload),
     signal,
@@ -246,16 +270,21 @@ export async function editBaseImage(
   avatarId: string,
   payload: EditGenerationPayload,
   signal?: AbortSignal
-): Promise<GenerationResponse> {
-  return apiRequest<GenerationResponse>(`/avatars/${avatarId}/edit-base`, {
+): Promise<AsyncAcceptedResponse> {
+  return apiRequest<AsyncAcceptedResponse>(`/avatars/${avatarId}/edit-base`, {
     method: "POST",
     body: JSON.stringify(payload),
     signal,
   });
 }
 
-export async function setActiveBase(avatarId: string, versionId: number): Promise<void> {
-  await apiRequest(`/avatars/${avatarId}/set-active-base/${versionId}`, {
+export async function setActiveBase(
+  avatarId: string,
+  versionId: number,
+  options: { confirmInvalidation?: boolean } = {}
+): Promise<void> {
+  const qs = options.confirmInvalidation ? "?confirm_invalidation=true" : "";
+  await apiRequest(`/avatars/${avatarId}/set-active-base/${versionId}${qs}`, {
     method: "POST",
   });
 }
@@ -270,20 +299,20 @@ export async function getReferenceSlots(avatarId: string): Promise<ReferenceSlot
   return apiRequest<ReferenceSlot[]>(`/avatars/${avatarId}/reference-slots`);
 }
 
-export async function generateReferences(avatarId: string): Promise<{ count: number; slots: ReferenceSlot[] }> {
-  return apiRequest<{ count: number; slots: ReferenceSlot[] }>(`/avatars/${avatarId}/generate-references`, {
+export async function generateReferences(avatarId: string): Promise<AsyncAcceptedResponse> {
+  return apiRequest<AsyncAcceptedResponse>(`/avatars/${avatarId}/generate-references`, {
     method: "POST",
   });
 }
 
-export async function trainLora(avatarId: string): Promise<AvatarDetailModel> {
-  return apiRequest<AvatarDetailModel>(`/avatars/${avatarId}/train-lora`, {
+export async function trainLora(avatarId: string): Promise<AsyncAcceptedResponse> {
+  return apiRequest<AsyncAcceptedResponse>(`/avatars/${avatarId}/train-lora`, {
     method: "POST",
   });
 }
 
-export async function retryLora(avatarId: number): Promise<{ avatar: AvatarDetailModel }> {
-  return apiRequest<{ avatar: AvatarDetailModel }>(`/avatars/${avatarId}/retry-lora`, {
+export async function retryLora(avatarId: number): Promise<AsyncAcceptedResponse> {
+  return apiRequest<AsyncAcceptedResponse>(`/avatars/${avatarId}/retry-lora`, {
     method: "POST",
   });
 }
@@ -306,6 +335,13 @@ export function subscribeAvatarEvents(
     "avatar.reaction.generation.started",
     "avatar.reaction.generation.completed",
     "avatar.reaction.generation.failed",
+    "avatar.visual.generation.started",
+    "avatar.visual.generation.completed",
+    "avatar.visual.generation.failed",
+    "avatar.references.generation.started",
+    "avatar.references.generation.progress",
+    "avatar.references.generation.completed",
+    "avatar.references.generation.failed",
   ];
 
   eventTypes.forEach((eventType) => {

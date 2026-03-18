@@ -13,6 +13,7 @@ import {
   getAttachments,
   getVisualVersions,
   setActiveBase,
+  subscribeAvatarEvents,
   type VisualVersion,
 } from "@/features/avatars/services/avatarApi";
 import type { Attachment } from "@/features/avatars/types";
@@ -49,7 +50,9 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
   const [activeVersionId, setActiveVersionId] = useState<number | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [maskImageUrl, setMaskImageUrl] = useState<string | null>(null);
 
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -108,6 +111,75 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
   }, [fetchAttachmentData, fetchAvatarBasics, fetchVersions]);
 
   useEffect(() => {
+    console.log(`Setting up SSE connection for avatar ${avatarId}...`);
+    const source = subscribeAvatarEvents(
+      Number(avatarId), 
+      (eventType, payload) => {
+        console.log("VisualIdentityStep received event:", eventType, payload);
+        
+        switch (eventType) {
+          case "avatar.visual.generation.started": {
+            setIsGenerating(true);
+            setError(null);
+            break;
+          }
+          case "avatar.visual.generation.completed": {
+            const data = payload.version as Record<string, unknown> | null;
+            if (data) {
+              setVersions(prev => {
+                const exists = prev.some(v => v.id === (data.id as number));
+                if (exists) return prev;
+                const newVersion: VisualVersion = {
+                  id: data.id as number,
+                  version_number: data.version_number as number,
+                  image_url: data.image_url as string,
+                  prompt: data.prompt as string,
+                  model_used: (data.model_used as string) || (data.model as string),
+                  aspect_ratio: data.aspect_ratio as string,
+                  is_active_base: (data.is_active_base as boolean) ?? true,
+                  is_edit: (data.is_edit as boolean) ?? false,
+                  created_at: (data.created_at as string) || new Date().toISOString(),
+                };
+                return [newVersion, ...prev];
+              });
+              setActiveVersionId(data.id as number);
+              setScale(1);
+              setOffset({ x: 0, y: 0 });
+              const ar = data.aspect_ratio as string;
+              if (ar && isAspectRatio(ar)) {
+                setActiveAspect(ar);
+              }
+            }
+            setIsGenerating(false);
+            break;
+          }
+          case "avatar.visual.generation.failed": {
+            setError(String(payload.error || "Generation failed"));
+            setIsGenerating(false);
+            break;
+          }
+          default:
+            break;
+        }
+      },
+      (error) => {
+        console.error("VisualIdentityStep SSE connection error:", error);
+        // Don't set isGenerating = false here automatically as EventSource will retry
+      }
+    );
+
+    source.onopen = () => {
+      console.log("VisualIdentityStep SSE connection established");
+    };
+
+    return () => {
+      console.log("Closing VisualIdentityStep SSE connection");
+      source.close();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [avatarId]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -144,83 +216,60 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
 
     setIsGenerating(true);
     setError(null);
-    abortControllerRef.current = new AbortController();
+    setInfo(null);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    // Determine mode: only use edit when we already have an image to edit from
+    const isEditMode = versions.length > 0 || attachments.length > 0;
+    const selectedModel =
+      MODEL_MAPPING[activeModel as keyof typeof MODEL_MAPPING] || "seedream_v5";
+
+    // Build reference image list (active version first, then attachments)
+    const orderedReferenceImages: string[] = [];
+    if (activeVersion) {
+      orderedReferenceImages.push(activeVersion.image_url);
+    }
+    orderedReferenceImages.push(...attachments.map((a) => a.url));
+
+    const apiPayload = isEditMode
+      ? {
+          prompt,
+          model: selectedModel,
+          aspect_ratio: activeAspect,
+          age: parsedAge,
+          reference_image_urls: orderedReferenceImages,
+          mask_image_url:
+            selectedModel === "openai_image_1_5" && maskImageUrl
+              ? maskImageUrl
+              : undefined,
+        }
+      : {
+          prompt,
+          model: selectedModel,
+          aspect_ratio: activeAspect,
+          age: parsedAge,
+        };
 
     try {
-      const isEditMode = attachments.length > 0 || !!activeVersion;
-      const selectedModel =
-        MODEL_MAPPING[activeModel as keyof typeof MODEL_MAPPING] || "seedream_v5";
-      const orderedReferenceImages: string[] = [];
-      if (activeVersion) {
-        orderedReferenceImages.push(activeVersion.image_url);
-      }
-      orderedReferenceImages.push(...attachments.map((attachment) => attachment.url));
-      
-      const payload = isEditMode
-        ? {
-            prompt,
-            model: selectedModel,
-            aspect_ratio: activeAspect,
-            age: parsedAge,
-            reference_image_urls: orderedReferenceImages,
-          }
-        : {
-            prompt,
-            model: selectedModel,
-            aspect_ratio: activeAspect,
-            age: parsedAge,
-          };
-
-      let data;
-      try {
-        data = isEditMode
-          ? await editBaseImage(avatarId, payload, abortControllerRef.current.signal)
-          : await generateBaseImage(avatarId, payload, abortControllerRef.current.signal);
-      } catch (err) {
-        console.log("API call returned error, fetching versions...");
-        const currentVersions = await getVisualVersions(avatarId);
-        if (currentVersions.length > 0) {
-          data = {
-            version_id: currentVersions[0].id,
-            version_number: currentVersions[0].version_number,
-            image_url: currentVersions[0].image_url,
-            prompt: currentVersions[0].prompt,
-            model: currentVersions[0].model_used,
-            aspect_ratio: currentVersions[0].aspect_ratio,
-          };
-        }
-      }
-      
-      if (data) {
-        setActiveVersionId(data.version_id);
-        setScale(1);
-        setOffset({ x: 0, y: 0 });
-        
-        if (data.aspect_ratio && isAspectRatio(data.aspect_ratio)) {
-          setActiveAspect(data.aspect_ratio);
-        }
-        
-        setVersions(prev => [{
-          id: data.version_id,
-          version_number: data.version_number,
-          image_url: data.image_url,
-          prompt: data.prompt,
-          model_used: data.model,
-          aspect_ratio: data.aspect_ratio,
-          is_active_base: true,
-          is_edit: isEditMode,
-          created_at: new Date().toISOString(),
-        }, ...prev]);
-      }
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        console.log("Generation aborted");
+      if (isEditMode) {
+        await editBaseImage(avatarId, apiPayload, controller.signal);
       } else {
-        console.error("Generation error:", error);
-        setError(error instanceof Error ? error.message : "Generation failed");
+        await generateBaseImage(avatarId, apiPayload, controller.signal);
+      }
+      setInfo("Generation request accepted. Waiting for completion event.");
+      // The backend accepted the request (202). isGenerating remains true
+      // until the SSE "completed" or "failed" event arrives.
+    } catch (apiError) {
+      if (apiError instanceof Error && apiError.name === "AbortError") {
+        // User cancelled — reset spinner
+        setIsGenerating(false);
+      } else {
+        console.error("Failed to start generation:", apiError);
+        setError(apiError instanceof Error ? apiError.message : "Failed to start generation");
+        setIsGenerating(false);
       }
     } finally {
-      setIsGenerating(false);
       abortControllerRef.current = null;
     }
   };
@@ -273,9 +322,16 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
     switch (tool) {
       case 'brush':
         if (isAnnotating) {
-          await attachAnnotatedImage();
+          const mask = exportMaskImage();
+          if (mask) {
+            setMaskImageUrl(mask);
+            setInfo("Mask captured. Next ChatGPT edit will apply the mask.");
+          }
+          setIsAnnotating(false);
+        } else {
+          setIsAnnotating(true);
+          setInfo("Mask mode enabled. Draw on the canvas, then tap brush again to capture the mask.");
         }
-        setIsAnnotating(prev => !prev);
         break;
       case 'add':
         setScale(prev => Math.min(prev + 0.25, 3));
@@ -328,49 +384,29 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
           }
         }
         break;
+      case 'clear_mask':
+        clearMaskCanvas();
+        setMaskImageUrl(null);
+        setInfo("Mask cleared.");
+        break;
     }
   };
 
-  const attachAnnotatedImage = async () => {
-    if (!activeVersion || !canvasRef.current) return;
-    
+  const exportMaskImage = (): string | null => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
     try {
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      const imageElement = new window.Image();
-      imageElement.crossOrigin = "anonymous";
-      
-      await new Promise<void>((resolve, reject) => {
-        imageElement.onload = () => resolve();
-        imageElement.onerror = reject;
-        imageElement.src = activeVersion.image_url;
-      });
-
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = imageElement.naturalWidth;
-      tempCanvas.height = imageElement.naturalHeight;
-      const tempCtx = tempCanvas.getContext('2d');
-      if (!tempCtx) return;
-
-      tempCtx.drawImage(imageElement, 0, 0);
-      
-      const scaleX = canvas.width / (canvas.offsetWidth || canvas.offsetWidth);
-      const scaleY = canvas.height / (canvas.offsetHeight || canvas.offsetHeight);
-      
-      tempCtx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, tempCanvas.width, tempCanvas.height);
-
-      tempCanvas.toBlob(async (blob) => {
-        if (!blob) return;
-        const file = new File([blob], 'annotation.png', { type: 'image/png' });
-        const attachment = await attachImage(avatarId, file);
-        setAttachments(prev => [...prev, attachment]);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }, 'image/png');
-    } catch (err) {
-      console.error("Failed to attach annotated image:", err);
+      return canvas.toDataURL("image/png");
+    } catch {
+      return null;
     }
+  };
+
+  const clearMaskCanvas = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
 
   const onMouseDown = (e: React.MouseEvent) => {
@@ -474,6 +510,7 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
         <div className="absolute right-8 top-1/2 -translate-y-1/2 flex flex-col gap-2 p-1.5 rounded-full bg-white/80 backdrop-blur-md border border-[#e4ebe4] shadow-2xl pointer-events-auto">
           {[
             { icon: "brush", label: "Brush", action: "brush", active: isAnnotating },
+            { icon: "ink_eraser", label: "Clear Mask", action: "clear_mask", disabled: !isAnnotating && !maskImageUrl },
             { icon: "add", label: "Zoom In", action: "add", disabled: scale >= 3 },
             { icon: "remove", label: "Zoom Out", action: "remove", disabled: scale <= 1 },
             { icon: "download", label: "Download", action: "download" },
@@ -519,11 +556,29 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
                       }
                       setError(null);
                     } catch (selectionError) {
-                      setError(
+                      const message =
                         selectionError instanceof Error
                           ? selectionError.message
-                          : "Failed to set active base image"
-                      );
+                          : "Failed to set active base image";
+                      if (message.toLowerCase().includes("invalidate")) {
+                        const confirmed = window.confirm(
+                          "Changing base image will invalidate references, training, and reactions. Continue?"
+                        );
+                        if (confirmed) {
+                          try {
+                            await setActiveBase(avatarId, v.id, { confirmInvalidation: true });
+                            await fetchVersions();
+                            setActiveVersionId(v.id);
+                            setError(null);
+                            setInfo("Active base changed. Step 2 outputs were invalidated.");
+                            return;
+                          } catch (retryError) {
+                            setError(retryError instanceof Error ? retryError.message : "Failed to set active base image");
+                            return;
+                          }
+                        }
+                      }
+                      setError(message);
                     }
                   }}
                   whileHover={{ scale: 1.1, y: -2 }}
@@ -710,6 +765,11 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
           {error && (
             <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
+            </div>
+          )}
+          {info && (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+              {info}
             </div>
           )}
           <div className="bg-white/95 backdrop-blur-2xl rounded-[28px] border border-[#e4ebe4] shadow-[0_24px_56px_-12px_rgba(0,0,0,0.1)]">

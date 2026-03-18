@@ -1,138 +1,254 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { VisualIdentityStep } from "./VisualIdentityStep";
 import { FinalizeAppearanceStep } from "./FinalizeAppearanceStep";
 import { PersonalityStep } from "./PersonalityStep";
+import { VisualIdentityStep } from "./VisualIdentityStep";
 import { buildLoginPath, useAuth } from "@/features/auth";
-import { createAvatarDraft, deleteAvatar, generateReferences, getAvatar, trainLora, updateAvatar } from "@/features/avatars/services/avatarApi";
+import {
+  createAvatarDraft,
+  deleteAvatar,
+  generateReferences,
+  getAvatar,
+  getAvatarReadiness,
+  retryLora,
+  trainLora,
+  updateAvatar,
+} from "@/features/avatars/services/avatarApi";
+import type { AvatarDetailModel } from "@/features/avatars/types";
 
 interface CreationWorkspaceProps {
   draftId: string;
 }
 
 const steps = [
-  { id: 1, name: "Visual Identity", icon: "face", description: "Defining the minute details and refining the facial features of your avatar." },
-  { id: 2, name: "Finalize Appearance", icon: "auto_fix", description: "Defining different angles of the model and confirming a stable identity." },
-  { id: 3, name: "Personality", icon: "psychology", description: "Making the avatar relatable by giving it a unique and deep personality." },
-];
+  { id: 1, name: "Visual Identity", description: "Generate and choose the active base face." },
+  { id: 2, name: "Finalize Appearance", description: "Generate 15 references and complete LoRA training." },
+  { id: 3, name: "Personality", description: "Define voice, profile, and complete the avatar." },
+] as const;
+
+type StepMeta = {
+  is_complete: boolean;
+  can_enter: boolean;
+  blocked_reasons: string[];
+};
 
 export function CreationWorkspace({ draftId }: CreationWorkspaceProps) {
   const router = useRouter();
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth();
-  const [currentStep, setCurrentStep] = useState(1);
-  const [avatarName, setAvatarName] = useState("unknown");
+
   const [isAuthChecked, setIsAuthChecked] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true);
+  const [avatar, setAvatar] = useState<AvatarDetailModel | null>(null);
+  const [currentStep, setCurrentStep] = useState(1);
+  const [stepReadiness, setStepReadiness] = useState<Record<number, StepMeta>>({});
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [avatarName, setAvatarName] = useState("");
+
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedNameRef = useRef("");
+
+  const avatarNumericId = Number(draftId);
+  const validAvatarId = Number.isInteger(avatarNumericId) && avatarNumericId > 0;
+
+  const loadWorkspace = useCallback(async () => {
+    if (!validAvatarId) return;
+    setIsLoadingWorkspace(true);
+    try {
+      const [avatarData, readiness] = await Promise.all([
+        getAvatar(avatarNumericId),
+        getAvatarReadiness(avatarNumericId),
+      ]);
+      setAvatar(avatarData);
+      setAvatarName(avatarData.name || "");
+      lastSavedNameRef.current = avatarData.name || "";
+      const readinessMap: Record<number, StepMeta> = {};
+      readiness.steps.forEach((step) => {
+        readinessMap[step.step_id] = {
+          is_complete: step.is_complete,
+          can_enter: step.can_enter,
+          blocked_reasons: step.blocked_reasons,
+        };
+      });
+      setStepReadiness(readinessMap);
+      setCurrentStep((prev) => {
+        const selected = readinessMap[prev];
+        if (selected && (selected.can_enter || selected.is_complete)) return prev;
+        return readiness.current_step;
+      });
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load avatar workspace.");
+    } finally {
+      setIsLoadingWorkspace(false);
+    }
+  }, [avatarNumericId, validAvatarId]);
+
+  const flushNameAutosave = useCallback(async () => {
+    if (!validAvatarId) return;
+    const trimmed = avatarName.trim();
+    if (trimmed === lastSavedNameRef.current) return;
+    await updateAvatar(avatarNumericId, { name: trimmed || undefined, command: "save_draft" });
+    lastSavedNameRef.current = trimmed;
+  }, [avatarName, avatarNumericId, validAvatarId]);
 
   useEffect(() => {
     if (isAuthLoading) return;
-
     if (!isAuthenticated) {
       router.push(buildLoginPath(`/avatars/create/${draftId}`));
-    } else {
-      setIsAuthChecked(true);
+      return;
     }
+    setIsAuthChecked(true);
   }, [draftId, isAuthenticated, isAuthLoading, router]);
 
   useEffect(() => {
     if (!isAuthChecked) return;
-
     if (draftId === "new") {
-      // Create a new avatar draft
       setIsCreating(true);
       void createAvatarDraft()
-        .then(draft => {
-          // Redirect to the actual draft page
-          router.replace(`/avatars/create/${draft.id}`);
-        })
-        .catch(err => {
-          console.error("Failed to create avatar:", err);
-          router.push(buildLoginPath(`/avatars/create/${draftId}`));
+        .then((draft) => router.replace(`/avatars/create/${draft.id}`))
+        .catch((createError) => {
+          setError(createError instanceof Error ? createError.message : "Failed to create avatar draft.");
         })
         .finally(() => setIsCreating(false));
-    } else if (!Number.isNaN(Number(draftId))) {
-      // Fetch existing avatar
-      void getAvatar(Number(draftId))
-        .then(data => data.name && setAvatarName(data.name || "Untitled Avatar"))
-        .catch(err => console.error("Failed to fetch avatar name", err));
-    }
-  }, [draftId, isAuthChecked, router]);
-
-  const [isProcessing, setIsProcessing] = useState(false);
-
-  const handleProceed = async () => {
-    if (currentStep >= 3) return;
-    
-    if (draftId === "new" || Number.isNaN(Number(draftId))) {
       return;
     }
+    void loadWorkspace();
+  }, [draftId, isAuthChecked, loadWorkspace, router]);
+
+  useEffect(() => {
+    if (!validAvatarId) return;
+    const interval = setInterval(() => {
+      void loadWorkspace();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [loadWorkspace, validAvatarId]);
+
+  useEffect(() => {
+    if (!validAvatarId) return;
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      void flushNameAutosave().catch(() => {
+        // keep inline error handling non-blocking
+      });
+    }, 700);
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, [avatarName, flushNameAutosave, validAvatarId]);
+
+  const currentTrainingStatus = avatar?.training_summary?.status || "not_started";
+
+  const stepStatus = useMemo(
+    () => ({
+      one: stepReadiness[1],
+      two: stepReadiness[2],
+      three: stepReadiness[3],
+    }),
+    [stepReadiness]
+  );
+
+  const handleProceed = async () => {
+    if (!validAvatarId || !avatar) return;
+    setError(null);
+    setNotice(null);
 
     if (currentStep === 1) {
+      if (!stepStatus.one?.is_complete) {
+        setError(stepStatus.one?.blocked_reasons?.[0] || "Select an active base image first.");
+        return;
+      }
       setIsProcessing(true);
       try {
-        await generateReferences(draftId);
-        setCurrentStep(2);
-      } catch (err) {
-        console.error("Failed to generate references:", err);
+        await generateReferences(String(avatar.id));
+        setNotice("Reference generation request accepted. Step 2 progress will update live.");
+      } catch (proceedError) {
+        setError(proceedError instanceof Error ? proceedError.message : "Failed to start references generation.");
       } finally {
         setIsProcessing(false);
       }
-    } else if (currentStep === 2) {
+      return;
+    }
+
+    if (currentStep === 2) {
+      if (!stepStatus.two?.can_enter) {
+        setError(stepStatus.two?.blocked_reasons?.[0] || "Step 2 is not ready.");
+        return;
+      }
       setIsProcessing(true);
       try {
-        await trainLora(draftId);
-        setCurrentStep(3);
-      } catch (err) {
-        console.error("Failed to train LoRA:", err);
+        if (currentTrainingStatus === "failed") {
+          await retryLora(avatar.id);
+          setNotice("Training retry accepted.");
+        } else {
+          await trainLora(String(avatar.id));
+          setNotice("LoRA training request accepted.");
+        }
+      } catch (proceedError) {
+        setError(proceedError instanceof Error ? proceedError.message : "Failed to start LoRA training.");
       } finally {
         setIsProcessing(false);
       }
     }
   };
 
-  const handleSave = async () => {
-    if (!draftId || draftId === "new" || Number.isNaN(Number(draftId))) {
+  const handleSaveAndExit = async () => {
+    if (!validAvatarId || !avatar) {
       router.push("/avatars");
       return;
     }
-
+    setIsProcessing(true);
+    setError(null);
     try {
-      await updateAvatar(Number(draftId), { name: avatarName });
+      await flushNameAutosave();
+      await updateAvatar(avatar.id, { command: "save_and_exit" });
       router.push("/avatars");
-    } catch (err) {
-      console.error("Failed to save avatar:", err);
-      router.push("/avatars");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to save and exit.");
+      setIsProcessing(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!draftId || draftId === "new" || Number.isNaN(Number(draftId))) return;
-    
-    const confirmed = window.confirm("Are you sure you want to delete this avatar? This action cannot be undone.");
+    if (!validAvatarId || !avatar) return;
+    const confirmed = window.confirm("Delete this avatar draft? You can restore it from Recycle Bin for 10 days.");
     if (!confirmed) return;
-
+    setIsProcessing(true);
     try {
-      await deleteAvatar(Number(draftId));
+      await deleteAvatar(avatar.id);
       router.push("/avatars");
-    } catch (err) {
-      console.error("Failed to delete avatar:", err);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to delete avatar.");
+      setIsProcessing(false);
     }
   };
 
-  if (!isAuthChecked || isCreating) {
+  const canGoToStep = (stepId: number): boolean => {
+    const info = stepReadiness[stepId];
+    if (!info) return stepId === 1;
+    return info.can_enter || info.is_complete || stepId === currentStep;
+  };
+
+  if (!isAuthChecked || isCreating || isLoadingWorkspace) {
     return null;
+  }
+
+  if (!avatar || !validAvatarId) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <p className="text-sm text-muted">Avatar draft not found.</p>
+      </div>
+    );
   }
 
   return (
     <div className="flex h-screen bg-transparent overflow-hidden">
-      {/* Sidebar Stepper */}
       <div className="w-80 border-r border-[#d6dbd4] bg-white/60 backdrop-blur-3xl flex flex-col z-20">
-        <div className="flex flex-col h-full px-8 pt-10 pb-20">
-          {/* 1. Header Section */}
+        <div className="flex flex-col h-full px-8 pt-10 pb-8">
           <div className="shrink-0">
             <Link href="/avatars" className="flex items-center gap-3 text-[#1a3a2a]/60 hover:text-[#3c9f95] transition-all mb-8 group">
               <div className="h-7 w-7 rounded-full border border-[#d6dbd4] flex items-center justify-center transition-transform group-hover:-translate-x-1 group-hover:border-[#3c9f95]">
@@ -140,161 +256,92 @@ export function CreationWorkspace({ draftId }: CreationWorkspaceProps) {
               </div>
               <span className="text-[9px] font-bold uppercase tracking-[0.25em]">Exit Pipeline</span>
             </Link>
-            <h1 className="font-display text-[40px] font-semibold text-[#1a3a2a] leading-tight tracking-tight">Avatar Creation</h1>
+            <h1 className="font-display text-[36px] font-semibold text-[#1a3a2a] leading-tight tracking-tight">Avatar Creation</h1>
           </div>
 
-          {/* Aesthetic Fine Divider */}
-          <div className="h-px w-full bg-[#f0f3f0] my-8 rounded-full" />
+          <div className="h-px w-full bg-[#f0f3f0] my-6 rounded-full" />
 
-          {/* 2. Identity Section */}
           <div className="shrink-0 space-y-2">
             <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#8ca1c5] ml-1">
               Avatar Name
             </label>
-            <input 
-              type="text" 
+            <input
+              type="text"
               value={avatarName}
-              onChange={(e) => {
-                setAvatarName(e.target.value);
-                // Debounced save would be better, but for now just update state
-              }}
-              onBlur={async () => {
-                if (draftId === "new" || Number.isNaN(Number(draftId))) return;
-                try {
-                  await updateAvatar(Number(draftId), { name: avatarName });
-                } catch (e) {
-                  console.error("Failed to sync name", e);
-                }
-              }}
-              className="w-full bg-white/50 border border-[#d6dbd4] rounded-xl px-4 py-3 text-sm font-semibold text-[#1a3a2a] outline-none focus:outline-none focus:ring-0 focus:border-[#3c9f95] transition-all placeholder:text-[#8ca1c5]/50 hover:bg-white"
+              onChange={(e) => setAvatarName(e.target.value)}
+              className="w-full bg-white/50 border border-[#d6dbd4] rounded-xl px-4 py-3 text-sm font-semibold text-[#1a3a2a]"
               placeholder="Enter avatar name..."
             />
           </div>
 
-          {/* Aesthetic Fine Divider */}
-          <div className="h-px w-full bg-[#f0f3f0] my-8 rounded-full" />
+          <div className="h-px w-full bg-[#f0f3f0] my-6 rounded-full" />
 
-          {/* 3. Phases Stepper - Balanced Spacing */}
-          <div className="flex-1 relative flex flex-col justify-between py-2">
-            {/* Timeline Vertical Line */}
-            <div className="absolute left-[19px] top-6 bottom-6 w-[2px] bg-[#f0f3f0] rounded-full">
-              <motion.div 
-                className="w-full bg-[#3c9f95] rounded-full"
-                initial={false}
-                animate={{ 
-                  height: currentStep === 1 ? "0%" : currentStep === 2 ? "50%" : "100%" 
-                }}
-                transition={{ duration: 0.5, ease: "circOut" }}
-              />
-            </div>
-
-            {steps.map((step) => (
-              <div
-                key={step.id}
-                className={`flex items-start gap-4 group cursor-pointer transition-all relative z-10 ${
-                  currentStep === step.id ? "translate-x-1" : ""
-                }`}
-                onClick={() => setCurrentStep(step.id)}
-              >
-                <div
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[16px] transition-all duration-300 border ${
-                    currentStep === step.id
-                      ? "bg-[#1a3a2a] text-white border-[#1a3a2a] shadow-xl shadow-[#1a3a2a]/20 scale-105"
-                      : "bg-white border-[#d6dbd4] text-[#8ca1c5] group-hover:border-[#3c9f95] group-hover:text-[#3c9f95] group-hover:shadow-lg group-hover:shadow-black/5"
+          <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+            {steps.map((step) => {
+              const info = stepReadiness[step.id];
+              const isCurrent = currentStep === step.id;
+              const enabled = canGoToStep(step.id);
+              const statusLabel = info?.is_complete ? "Ready" : enabled ? "In Progress" : "Blocked";
+              return (
+                <button
+                  key={step.id}
+                  onClick={() => {
+                    if (enabled) setCurrentStep(step.id);
+                  }}
+                  disabled={!enabled}
+                  className={`w-full rounded-2xl border p-3 text-left transition-all ${
+                    isCurrent
+                      ? "border-[#3c9f95] bg-[#3c9f95]/10"
+                      : enabled
+                        ? "border-[#d6dbd4] bg-white hover:border-[#3c9f95]"
+                        : "border-[#e8ece8] bg-[#f7f9f8] opacity-80"
                   }`}
+                  aria-current={isCurrent ? "step" : undefined}
                 >
-                  <span className={`material-symbols-outlined !text-[20px] ${currentStep === step.id ? "animate-pulse" : ""}`}>{step.icon}</span>
-                </div>
-                <div className="pt-0.5">
-                  <p
-                    className={`text-[8px] font-bold uppercase tracking-[0.25em] transition-colors mb-0.5 ${
-                      currentStep === step.id ? "text-[#3c9f95]" : "text-[#8ca1c5] group-hover:text-[#5c6d66]"
-                    }`}
-                  >
-                    Phase 0{step.id}
+                  <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-[#8ca1c5]">Step {step.id}</p>
+                  <p className="mt-1 text-sm font-bold text-[#1a3a2a]">{step.name}</p>
+                  <p className="mt-1 text-[11px] text-[#5c6d66]">{step.description}</p>
+                  <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-[#3c9f95]">
+                    {statusLabel}
                   </p>
-                  <p
-                    className={`text-[14px] font-bold transition-colors ${
-                      currentStep === step.id ? "text-[#1a3a2a]" : "text-[#5c6d66] group-hover:text-[#1a3a2a]"
-                    }`}
-                  >
-                    {step.name}
-                  </p>
-                  <p className="text-[10px] font-medium text-[#8ca1c5] mt-0.5">{step.description}</p>
-                </div>
-              </div>
-            ))}
+                  {info?.blocked_reasons?.[0] && !enabled && (
+                    <p className="mt-1 text-[10px] text-red-600">{info.blocked_reasons[0]}</p>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
-          {/* Aesthetic Fine Divider */}
-          <div className="h-px w-full bg-[#f0f3f0] my-8 rounded-full" />
+          <div className="h-px w-full bg-[#f0f3f0] my-6 rounded-full" />
 
-          {/* 4. Action Buttons */}
           <div className="shrink-0 space-y-3">
+            {error && <p className="text-xs text-red-600">{error}</p>}
+            {notice && <p className="text-xs text-emerald-700">{notice}</p>}
             <div className="grid grid-cols-2 gap-3">
-              <button onClick={handleDelete} className="flex items-center justify-center gap-2 h-11 rounded-xl border border-[#f0f3f0] text-red-500/70 text-[10px] font-bold uppercase tracking-widest transition-all hover:bg-red-50 hover:text-red-500 hover:border-red-100 active:scale-95">
-                <span className="material-symbols-outlined !text-[16px]">delete</span>
+              <button onClick={() => void handleDelete()} className="h-11 rounded-xl border border-[#f0f3f0] text-red-500/70 text-[10px] font-bold uppercase tracking-widest">
                 Delete
               </button>
-              <button onClick={handleSave} className="flex items-center justify-center gap-2 h-11 rounded-xl border border-[#f0f3f0] text-[#5c6d66] text-[10px] font-bold uppercase tracking-widest transition-all hover:bg-black hover:text-white hover:border-black active:scale-95">
-                <span className="material-symbols-outlined !text-[16px]">save</span>
-                Save
+              <button onClick={() => void handleSaveAndExit()} className="h-11 rounded-xl border border-[#f0f3f0] text-[#5c6d66] text-[10px] font-bold uppercase tracking-widest">
+                Save & Exit
               </button>
             </div>
-            {currentStep > 1 && (
-              <button 
-                onClick={() => setCurrentStep(prev => prev - 1)}
-                disabled={isProcessing}
-                className="w-full flex items-center justify-center gap-3 h-11 rounded-xl border border-[#d6dbd4] text-[#5c6d66] text-[10px] font-bold uppercase tracking-[0.2em] transition-all hover:bg-[#f4f7f5] hover:text-[#1a3a2a] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <span className="material-symbols-outlined !text-[16px] transition-transform group-hover:-translate-x-1">arrow_back</span>
-                Back
-              </button>
-            )}
-            <button 
-              onClick={handleProceed}
-              disabled={isProcessing || currentStep >= 3}
-              className="w-full flex items-center justify-center gap-3 h-11 rounded-xl bg-[#3c9f95] text-white text-[10px] font-bold uppercase tracking-[0.2em] shadow-lg shadow-[#3c9f95]/20 transition-all hover:bg-[#2d7a72] hover:shadow-xl active:scale-[0.98] group disabled:opacity-50 disabled:cursor-not-allowed"
+            <button
+              onClick={() => void handleProceed()}
+              disabled={isProcessing || currentStep === 3}
+              className="w-full h-11 rounded-xl bg-[#3c9f95] text-white text-[10px] font-bold uppercase tracking-[0.2em] disabled:opacity-50"
             >
-              {isProcessing ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                <>
-                  Proceed Further
-                  <span className="material-symbols-outlined !text-[16px] transition-transform group-hover:translate-x-1">arrow_forward</span>
-                </>
-              )}
+              {isProcessing ? "Processing..." : currentStep === 1 ? "Generate References" : currentTrainingStatus === "failed" ? "Retry Training" : "Train LoRA"}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-        {/* Background Gradients */}
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#3c9f95]/5 blur-[120px] rounded-full -translate-y-1/2 translate-x-1/4 pointer-events-none" />
-
-        {/* Simplified Header - Empty/Reduced */}
         <header className="h-4 z-10" />
-
         <main className="flex-1 overflow-hidden relative">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={currentStep}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.4, ease: [0.23, 1, 0.32, 1] }}
-              className="h-full"
-            >
-              {currentStep === 1 && <VisualIdentityStep avatarId={draftId} />}
-              {currentStep === 2 && <FinalizeAppearanceStep avatarId={draftId} />}
-              {currentStep === 3 && <PersonalityStep avatarId={draftId} />}
-            </motion.div>
-          </AnimatePresence>
+          {currentStep === 1 && <VisualIdentityStep avatarId={draftId} />}
+          {currentStep === 2 && <FinalizeAppearanceStep avatarId={draftId} />}
+          {currentStep === 3 && <PersonalityStep avatarId={draftId} />}
         </main>
       </div>
     </div>

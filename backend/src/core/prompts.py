@@ -1,21 +1,14 @@
-STEP1_NEW_GENERATION_PROMPT_TEMPLATE = """Photorealistic studio portrait of {user_prompt} - straight-on frontal view with body and head facing directly at the camera, eyes looking straight into the lens with confident natural eye contact, relaxed yet professional approachable expression, medium close-up framing from head to upper chest perfectly centered on rule of thirds at eye level.
+STEP1_NEW_GENERATION_PROMPT_TEMPLATE = """High-end professional studio portrait of {user_prompt}. 
 
-Background is intelligently matched to the character (e.g. softly blurred setting if described) or clean high-end photography studio with creamy bokeh that makes the subject pop.
+Technically flawless photography: clean natural lighting with soft shadows, realistic skin textures, sharp focus on the subject with creamy bokeh background, realistic hair and clothing detail. Shot on 85mm lens, ultra-photorealistic, professional color grading, lifelike and natural.
 
-Professional studio lighting: large softbox key light from front-left at 45 degrees with subtle fill from the right and gentle hair/rim light, even natural exposure, soft flattering shadows, warm realistic skin tones, no harsh or overly bright highlights. Shot on Canon EOS R5 with 85mm f/1.8 lens, realistic skin pores and micro-details, natural hair strands and fabric texture, subtle film grain, shallow depth of field, perfect professional color grading.
-
-Keep the exact same framing, pose, camera angle, lighting direction, eye contact, and background style unchanged no matter what. Captured in a real high-end professional photoshoot, ultra-photorealistic, flawless yet completely natural and lifelike, no text, no watermarks, no AI artifacts or plastic look."""
+Preserve all descriptive details from the prompt exactly. No text, no watermarks, no AI artifacts."""
 
 STEP1_EDIT_PROMPT_TEMPLATE = """Edit the provided reference image to: {user_prompt}
 
-Apply only the requested changes. Preserve all non-requested details exactly from the reference image.
+Apply only the requested changes. Preserve all non-requested details exactly from the reference image, including identity, lighting direction, background style, and photographic quality.
 
-Preserve identity and photographic fingerprint from the reference image: camera perspective, lens look, framing scale, lighting direction and ratio, exposure balance, skin tone rendering, color grading, texture detail, natural hair strands, subtle film grain, depth of field, and background style.
-
-If the request explicitly asks to change pose, head angle, camera angle, framing, lighting, expression, color, or clothing, change only that requested attribute and keep everything else untouched.
-
-Quality target: real high-end professional photoshoot, Canon EOS R5 with 85mm f/1.8 look, ultra-photorealistic, natural and lifelike, no text, no watermarks, no AI artifacts, no plastic skin.
-Output exactly one edited image."""
+Quality target: high-end professional photoshoot, ultra-photorealistic, natural and lifelike. Output exactly one edited image."""
 
 STEP1_EDIT_PRESERVE_PROMPT = """Preserve the input image exactly. Keep identity, framing, lighting, clothing, and background unchanged."""
 

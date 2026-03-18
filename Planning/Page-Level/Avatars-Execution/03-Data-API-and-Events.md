@@ -256,8 +256,10 @@ Recommended voice config shape:
 
 ### Draft and CRUD Endpoints
 - `POST /api/avatars/drafts`
+- `POST /api/avatars` (alias)
 - `GET /api/avatars`
 - `GET /api/avatars/:id`
+- `GET /api/avatars/:id/readiness`
 - `PATCH /api/avatars/:id`
 - `DELETE /api/avatars/:id`
 
@@ -269,6 +271,7 @@ Expected capabilities:
 
 ### Visual Generation Endpoints
 - `POST /api/avatars/:id/generate-base`
+- `POST /api/avatars/:id/edit-base`
 - `POST /api/avatars/:id/generate-references`
 - `POST /api/avatars/:id/train-lora`
 - `POST /api/avatars/:id/retry-lora`
@@ -280,6 +283,12 @@ Backend rules:
 - reference generation populates all 15 slots
 - LoRA training starts only from confirmed reference set
 - retry endpoint is allowed only when latest job is failed
+- async endpoints return an accepted envelope:
+  - `accepted`
+  - `operation_id`
+  - `avatar_id`
+  - `operation`
+  - `started_at`
 
 ### Sharing and Clone Endpoints
 - `POST /api/avatars/:id/toggle-visibility`

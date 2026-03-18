@@ -1,5 +1,6 @@
 {
-  "venvPath": ".",
+  "include": ["src"],
+  "extraPaths": ["src"],
   "pythonVersion": "3.11",
   "typeCheckingMode": "basic",
   "reportMissingTypeStubs": false,

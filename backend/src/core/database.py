@@ -38,5 +38,8 @@ async def get_db():
 
 
 async def init_db():
+    # In production-like environments, schema should be created via migrations.
+    if not settings.DEBUG:
+        return
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

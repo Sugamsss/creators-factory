@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -19,6 +20,7 @@ from src.modules.avatars.models import (
     AvatarAttachment,
     AvatarBuildState,
     AvatarDeploymentSummary,
+    AvatarEvent,
     AvatarFieldLock,
     AvatarPersonalitySnapshot,
     AvatarReactionAsset,
@@ -28,6 +30,17 @@ from src.modules.avatars.models import (
     ReferenceSlot,
     VisualVersion,
 )
+from src.modules.avatars.domain import (
+    AvatarCompletionContext,
+    AvatarTransitionError,
+    apply_avatar_command,
+    can_clone_avatar,
+    can_edit_avatar,
+    can_read_avatar,
+    can_toggle_visibility,
+    can_use_avatar,
+    derive_avatar_readiness,
+)
 from src.modules.avatars.schemas import (
     AttachmentResponse,
     AvatarAllResponse,
@@ -35,9 +48,11 @@ from src.modules.avatars.schemas import (
     AvatarDetailResponse,
     AvatarDraftCreate,
     AvatarFieldLockResponse,
+    AvatarReadinessResponse,
     AvatarTrainingSummary,
     AvatarUpdate,
     AvatarsHubResponse,
+    AsyncAcceptedResponse,
     BindingActionResponse,
     CloneResponse,
     DeployRequest,
@@ -45,20 +60,18 @@ from src.modules.avatars.schemas import (
     ExploreResponse,
     EditBaseRequest,
     GenerateBaseRequest,
-    GenerateReferencesResponse,
-    GenerationResponse,
     PauseRequest,
     ReferenceSlotResponse,
-    RetryLoraResponse,
     ToggleVisibilityRequest,
     ToggleVisibilityResponse,
     VisualVersionResponse,
 )
-from src.services.ai.fal_service import FalService, FalServiceError
+from src.services.ai.fal_service import FalService
 from src.services.ai.media_service import MediaStorageService
 from src.services.ai.prompt_templates import PromptTemplateService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 DRAFT_STATES = {
     AvatarBuildState.DRAFT_VISUAL,
@@ -82,6 +95,27 @@ class AvatarEventBroker:
     ) -> None:
         payload_with_event = {"event": event_type, **payload}
         message = f"event: {event_type}\ndata: {json.dumps(payload_with_event)}\n\n"
+
+        try:
+            async with AsyncSessionLocal() as session:
+                session.add(
+                    AvatarEvent(
+                        avatar_id=avatar_id,
+                        event_type=event_type,
+                        payload_json=json.dumps(payload_with_event),
+                    )
+                )
+                await session.commit()
+        except Exception:
+            # Event durability is best effort; live subscriber fanout still proceeds.
+            logger.exception("Failed to persist avatar event", extra={"avatar_id": avatar_id, "event_type": event_type})
+
+        sub_count = len(self._subscribers.get(avatar_id, []))
+        logger.info(
+            "Broker publishing %s for avatar %d to %d subscribers",
+            event_type, avatar_id, sub_count
+        )
+
         for queue in self._subscribers.get(avatar_id, []):
             await queue.put(message)
 
@@ -105,6 +139,320 @@ media_service = MediaStorageService()
 event_broker = AvatarEventBroker()
 training_tasks: Dict[int, asyncio.Task[Any]] = {}
 reaction_tasks: Dict[int, asyncio.Task[Any]] = {}
+visual_generation_tasks: Dict[int, asyncio.Task[Any]] = {}
+reference_generation_tasks: Dict[int, asyncio.Task[Any]] = {}
+visual_generation_ops: Dict[int, str] = {}
+reference_generation_ops: Dict[int, str] = {}
+training_ops: Dict[int, str] = {}
+
+
+async def _start_reference_generation(avatar_id: int) -> str:
+    if (
+        avatar_id in reference_generation_tasks
+        and not reference_generation_tasks[avatar_id].done()
+    ):
+        return reference_generation_ops.get(avatar_id, uuid.uuid4().hex)
+    operation_id = uuid.uuid4().hex
+    reference_generation_ops[avatar_id] = operation_id
+
+    async def _run():
+        try:
+            async with AsyncSessionLocal() as db:
+                avatar = await _fetch_avatar_with_relations(db, avatar_id)
+                if not avatar:
+                    return
+
+                await event_broker.publish(
+                    avatar_id,
+                    "avatar.references.generation.started",
+                    {"avatarId": avatar_id, "operationId": operation_id},
+                )
+
+                base_version_result = await db.execute(
+                    select(VisualVersion)
+                    .where(
+                        VisualVersion.avatar_id == avatar.id,
+                        VisualVersion.is_active_base,
+                    )
+                    .order_by(VisualVersion.version_number.desc())
+                    .limit(1)
+                )
+                base_version = base_version_result.scalar_one_or_none()
+                if not base_version:
+                    raise Exception("No active base image selected")
+
+                source_image_url = base_version.edit_source_url or base_version.image_url
+                slot_definitions = PromptTemplateService.get_step2_reference_slots()
+
+                existing_result = await db.execute(
+                    select(ReferenceSlot).where(ReferenceSlot.avatar_id == avatar.id)
+                )
+                existing_map = {
+                    slot.slot_key: slot for slot in existing_result.scalars().all()
+                }
+
+                total = len(slot_definitions)
+                for i, slot_def in enumerate(slot_definitions):
+                    slot_key = slot_def["slot_key"]
+                    slot_label = slot_def["label"]
+                    include_base = slot_def.get("include_base", False)
+
+                    if include_base:
+                        image_url = base_version.image_url
+                        prompt = "Base face"
+                    else:
+                        slot_prompt = f"Turn the person in the image to: {slot_def.get('prompt', '')}"
+                        result = await fal_service.submit_and_wait(
+                            model="seedream_v5",
+                            prompt=slot_prompt,
+                            aspect_ratio=base_version.aspect_ratio,
+                            is_edit=True,
+                            image_urls=[source_image_url],
+                        )
+
+                        images = result.get("images") or []
+                        if not images or not isinstance(images[0], dict) or not images[0].get("url"):
+                            raise RuntimeError("fal response did not include a usable image URL")
+                        fal_url = images[0]["url"]
+                        short_id = uuid.uuid4().hex[:8]
+                        filename = f"ref_{slot_key}_{short_id}.png"
+                        image_url = await media_service.download_and_store(
+                            fal_url, avatar.id, "reference", filename
+                        )
+                        prompt = slot_prompt
+
+                    if slot_key in existing_map:
+                        slot = existing_map[slot_key]
+                        slot.image_url = image_url
+                        slot.prompt = prompt
+                        slot.slot_label = slot_label
+                        slot.aspect_ratio = base_version.aspect_ratio
+                        slot.is_refined = False
+                    else:
+                        slot = ReferenceSlot(
+                            avatar_id=avatar.id,
+                            slot_key=slot_key,
+                            slot_label=slot_label,
+                            image_url=image_url,
+                            prompt=prompt,
+                            aspect_ratio=base_version.aspect_ratio,
+                        )
+                        db.add(slot)
+
+                    await event_broker.publish(
+                        avatar_id,
+                        "avatar.references.generation.progress",
+                        {
+                            "avatarId": avatar_id,
+                            "operationId": operation_id,
+                            "progress": i + 1,
+                            "total": total,
+                            "currentSlot": slot_key,
+                        },
+                    )
+
+                expected_keys = {slot["slot_key"] for slot in slot_definitions}
+                for key, stale in existing_map.items():
+                    if key not in expected_keys:
+                        await db.delete(stale)
+
+                if (
+                    avatar.visual_profile
+                    and avatar.visual_profile.training_status
+                    == AvatarTrainingStatus.COMPLETED
+                ):
+                    avatar.visual_profile.training_status = (
+                        AvatarTrainingStatus.NOT_STARTED
+                    )
+                    avatar.visual_profile.lora_model_id = None
+                    avatar.visual_profile.training_completed_at = None
+                    avatar.visual_profile.training_error_code = None
+
+                avatar.build_state = AvatarBuildState.DRAFT_APPEARANCE
+                await db.commit()
+
+                await event_broker.publish(
+                    avatar_id,
+                    "avatar.references.generation.completed",
+                    {"avatarId": avatar_id, "operationId": operation_id},
+                )
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            await event_broker.publish(
+                avatar_id,
+                "avatar.references.generation.failed",
+                {"avatarId": avatar_id, "operationId": operation_id, "error": str(e)},
+            )
+        finally:
+            reference_generation_ops.pop(avatar_id, None)
+
+    reference_generation_tasks[avatar_id] = asyncio.create_task(_run())
+    return operation_id
+
+
+async def _start_visual_generation(
+    avatar_id: int,
+    payload: Dict[str, Any],
+    is_edit: bool = False,
+    reference_images: Optional[List[str]] = None,
+) -> str:
+    if (
+        avatar_id in visual_generation_tasks
+        and not visual_generation_tasks[avatar_id].done()
+    ):
+        return visual_generation_ops.get(avatar_id, uuid.uuid4().hex)
+    operation_id = uuid.uuid4().hex
+    visual_generation_ops[avatar_id] = operation_id
+
+    async def _run():
+        try:
+            async with AsyncSessionLocal() as db:
+                avatar = await _fetch_avatar_with_relations(db, avatar_id)
+                if not avatar:
+                    return
+
+                await event_broker.publish(
+                    avatar_id,
+                    "avatar.visual.generation.started",
+                    {
+                        "avatarId": avatar_id,
+                        "operationId": operation_id,
+                        "isEdit": is_edit,
+                    },
+                )
+
+                version_result = await db.execute(
+                    select(func.max(VisualVersion.version_number)).where(
+                        VisualVersion.avatar_id == avatar_id
+                    )
+                )
+                next_version = (version_result.scalar() or 0) + 1
+
+                if is_edit:
+                    enhanced_prompt = PromptTemplateService.get_step1_edit_prompt(
+                        payload["prompt"], payload.get("age")
+                    )
+                    aspect_ratio = payload.get("aspect_ratio")
+                    mask_image_url = payload.get("mask_image_url")
+
+                    # Ensure reference images are set if none provided
+                    if not reference_images:
+                        # Find current active version
+                        base_v_res = await db.execute(
+                            select(VisualVersion)
+                            .where(
+                                VisualVersion.avatar_id == avatar_id,
+                                VisualVersion.is_active_base,
+                            )
+                            .order_by(VisualVersion.version_number.desc())
+                            .limit(1)
+                        )
+                        base_v = base_v_res.scalar_one_or_none()
+                        if base_v:
+                            actual_refs = [base_v.edit_source_url or base_v.image_url]
+                        else:
+                            actual_refs = []
+                    else:
+                        actual_refs = reference_images
+                else:
+                    enhanced_prompt = PromptTemplateService.get_step1_new_generation_prompt(
+                        payload["prompt"], payload.get("age")
+                    )
+                    aspect_ratio = payload.get("aspect_ratio")
+                    mask_image_url = None
+                    actual_refs = None
+
+                result = await fal_service.submit_and_wait(
+                    model=payload["model"],
+                    prompt=enhanced_prompt,
+                    aspect_ratio=aspect_ratio,
+                    is_edit=is_edit,
+                    image_urls=actual_refs,
+                    mask_image_url=mask_image_url,
+                )
+
+                images = result.get("images") or []
+                if not images or not isinstance(images[0], dict) or not images[0].get("url"):
+                    raise RuntimeError("fal response did not include a usable image URL")
+                fal_url = images[0]["url"]
+                short_id = uuid.uuid4().hex[:8]
+                filename = f"{'edit' if is_edit else 'base'}_v{next_version}_{short_id}.png"
+                s3_url = await media_service.download_and_store(
+                    fal_url, avatar_id, "visual", filename
+                )
+
+                if await _should_invalidate_step2_outputs(db, avatar):
+                    await _invalidate_step2_outputs(db, avatar)
+
+                await db.execute(
+                    update(VisualVersion)
+                    .where(VisualVersion.avatar_id == avatar_id)
+                    .values(is_active_base=False)
+                )
+
+                visual_version = VisualVersion(
+                    avatar_id=avatar_id,
+                    version_number=next_version,
+                    image_url=s3_url,
+                    fal_request_id=result.get("request_id"),
+                    prompt=payload["prompt"],
+                    enhanced_prompt=enhanced_prompt,
+                    model_used=payload["model"],
+                    aspect_ratio=aspect_ratio,
+                    quality="medium"
+                    if payload["model"] in {"openai_image_1_5", "google_nano_banana_2"}
+                    else "auto_3K",
+                    is_edit=is_edit,
+                    mask_image_url=mask_image_url,
+                    edit_source_url=fal_url,
+                    is_active_base=True,
+                )
+                db.add(visual_version)
+                avatar.build_state = AvatarBuildState.DRAFT_APPEARANCE
+                await db.flush()
+                await _sync_avatar_active_card_from_versions(db, avatar)
+
+                await _enforce_visual_history_cap(db, avatar_id)
+                await db.commit()
+                await db.refresh(visual_version)
+
+                await event_broker.publish(
+                    avatar_id,
+                    "avatar.visual.generation.completed",
+                    {
+                        "avatarId": avatar_id,
+                        "operationId": operation_id,
+                        "version": {
+                            "id": visual_version.id,
+                            "version_number": visual_version.version_number,
+                            "image_url": visual_version.image_url,
+                            "prompt": visual_version.prompt,
+                            "model": visual_version.model_used,
+                            "aspect_ratio": visual_version.aspect_ratio,
+                            "is_active_base": visual_version.is_active_base,
+                            "is_edit": visual_version.is_edit,
+                            "created_at": visual_version.created_at.isoformat()
+                            if visual_version.created_at
+                            else datetime.now(timezone.utc).isoformat(),
+                        },
+                    },
+                )
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            await event_broker.publish(
+                avatar_id,
+                "avatar.visual.generation.failed",
+                {"avatarId": avatar_id, "operationId": operation_id, "error": str(e)},
+            )
+        finally:
+            visual_generation_ops.pop(avatar_id, None)
+
+    visual_generation_tasks[avatar_id] = asyncio.create_task(_run())
+    return operation_id
 
 
 def _json_load_list(raw: Optional[str]) -> List[str]:
@@ -235,19 +583,11 @@ def _avatar_detail_response(avatar: Avatar) -> AvatarDetailResponse:
 
 
 def _can_read_avatar(avatar: Avatar, user_id: str) -> bool:
-    if avatar.build_state == AvatarBuildState.SOFT_DELETED:
-        return avatar.owner_id == user_id
-    if avatar.owner_id == user_id:
-        return True
-    if avatar.ownership_scope == "org":
-        return True
-    return bool(avatar.is_public)
+    return can_read_avatar(avatar, user_id)
 
 
 def _can_edit_avatar(avatar: Avatar, user_id: str) -> bool:
-    if avatar.ownership_scope == "org":
-        return avatar.owner_id == user_id
-    return avatar.owner_id == user_id
+    return can_edit_avatar(avatar, user_id)
 
 
 def _is_public_eligible(avatar: Avatar) -> bool:
@@ -256,6 +596,68 @@ def _is_public_eligible(avatar: Avatar) -> bool:
         and avatar.ownership_scope == "personal"
         and avatar.source_type == "original"
         and avatar.deleted_at is None
+    )
+
+
+async def _get_active_base_version(
+    db: AsyncSession, avatar_id: int
+) -> Optional[VisualVersion]:
+    result = await db.execute(
+        select(VisualVersion)
+        .where(VisualVersion.avatar_id == avatar_id, VisualVersion.is_active_base)
+        .order_by(VisualVersion.version_number.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _sync_avatar_active_card_from_versions(
+    db: AsyncSession, avatar: Avatar
+) -> Optional[VisualVersion]:
+    active = await _get_active_base_version(db, avatar.id)
+    avatar.active_card_image_url = active.image_url if active else None
+    return active
+
+
+def _nested_lock_hits(locked_paths: set[str], payload: Dict[str, Any], prefix: str) -> List[str]:
+    hits: List[str] = []
+    for key, value in payload.items():
+        field_path = f"{prefix}.{key}" if prefix else key
+        if field_path in locked_paths:
+            hits.append(field_path)
+        if isinstance(value, dict):
+            hits.extend(_nested_lock_hits(locked_paths, value, field_path))
+    return hits
+
+
+def _assert_visual_mutable(avatar: Avatar) -> None:
+    if avatar.source_type == "clone":
+        raise HTTPException(status_code=400, detail="Clone visual identity is immutable")
+    if avatar.build_state == AvatarBuildState.READY:
+        raise HTTPException(
+            status_code=409,
+            detail="Completed avatars have immutable visuals in Phase 1.",
+        )
+
+
+async def _build_completion_context(db: AsyncSession, avatar: Avatar) -> AvatarCompletionContext:
+    active = await _get_active_base_version(db, avatar.id)
+    refs_result = await db.execute(
+        select(func.count(ReferenceSlot.id)).where(ReferenceSlot.avatar_id == avatar.id)
+    )
+    refs_count = refs_result.scalar_one()
+    communication = _json_load_list(avatar.communication_principles)
+    return AvatarCompletionContext(
+        has_active_base=active is not None,
+        reference_count=refs_count,
+        training_status=avatar.visual_profile.training_status if avatar.visual_profile else None,
+        name=avatar.name,
+        age=avatar.age,
+        description=avatar.description,
+        backstory=avatar.backstory,
+        communication_principles_count=len(communication),
+        industry_id=avatar.industry_id,
+        role_paragraph=avatar.role_paragraph,
     )
 
 
@@ -274,7 +676,15 @@ async def _fetch_avatar_with_relations(
         )
         .where(Avatar.id == avatar_id)
     )
-    return result.scalar_one_or_none()
+    avatar = result.scalar_one_or_none()
+    if avatar is None:
+        return None
+    active = await _get_active_base_version(db, avatar.id)
+    if active and avatar.active_card_image_url != active.image_url:
+        avatar.active_card_image_url = active.image_url
+    if active is None and avatar.active_card_image_url is not None:
+        avatar.active_card_image_url = None
+    return avatar
 
 
 async def _ensure_visual_profile(
@@ -316,6 +726,9 @@ def _cancel_background_task(
     if not task.done():
         task.cancel()
     task_map.pop(avatar_id, None)
+    visual_generation_ops.pop(avatar_id, None)
+    reference_generation_ops.pop(avatar_id, None)
+    training_ops.pop(avatar_id, None)
 
 
 async def _should_invalidate_step2_outputs(db: AsyncSession, avatar: Avatar) -> bool:
@@ -368,42 +781,15 @@ async def _invalidate_step2_outputs(db: AsyncSession, avatar: Avatar) -> None:
     avatar.build_state = AvatarBuildState.DRAFT_APPEARANCE
 
 
-def _validate_completion(avatar: Avatar, references: List[ReferenceSlot]) -> None:
-    if not avatar.active_card_image_url:
-        raise HTTPException(status_code=400, detail="Active base face is required")
-
-    if len(references) != 15:
-        raise HTTPException(
-            status_code=400, detail="Reference set must contain exactly 15 images"
-        )
-
-    profile = avatar.visual_profile
-    if not profile or profile.training_status != AvatarTrainingStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail="LoRA training must be completed")
-
-    if not avatar.name or len(avatar.name) < 2:
-        raise HTTPException(status_code=400, detail="Name is required")
-
-    if avatar.age is None:
-        raise HTTPException(status_code=400, detail="Age is required")
-
-    if not avatar.description or len(avatar.description) < 20:
-        raise HTTPException(status_code=400, detail="Description is required")
-
-    if not avatar.backstory or len(avatar.backstory) < 80:
-        raise HTTPException(status_code=400, detail="Backstory is required")
-
-    communication_principles = _json_load_list(avatar.communication_principles)
-    if not communication_principles:
-        raise HTTPException(
-            status_code=400, detail="At least one communication principle is required"
-        )
-
-    if avatar.industry_id is None:
-        raise HTTPException(status_code=400, detail="Industry is required")
-
-    if not avatar.role_paragraph:
-        raise HTTPException(status_code=400, detail="Role is required")
+async def _validate_completion(db: AsyncSession, avatar: Avatar) -> None:
+    context = await _build_completion_context(db, avatar)
+    readiness = derive_avatar_readiness(avatar.build_state, context)
+    if readiness.can_complete_avatar:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail="; ".join(readiness.completion_blockers),
+    )
 
 
 async def _schedule_reaction_generation(avatar_id: int) -> None:
@@ -463,9 +849,11 @@ async def _schedule_reaction_generation(avatar_id: int) -> None:
     reaction_tasks[avatar_id] = asyncio.create_task(_run())
 
 
-async def _start_lora_training(avatar_id: int) -> None:
+async def _start_lora_training(avatar_id: int) -> str:
     if avatar_id in training_tasks and not training_tasks[avatar_id].done():
-        return
+        return training_ops.get(avatar_id, uuid.uuid4().hex)
+    operation_id = uuid.uuid4().hex
+    training_ops[avatar_id] = operation_id
 
     async def _run(attempt_index: int = 0) -> None:
         try:
@@ -489,6 +877,7 @@ async def _start_lora_training(avatar_id: int) -> None:
                     "avatar.training.started",
                     {
                         "avatarId": avatar_id,
+                        "operationId": operation_id,
                         "status": "running",
                         "progressPercent": 0,
                         "retryAttempt": profile.training_attempt_count,
@@ -511,6 +900,7 @@ async def _start_lora_training(avatar_id: int) -> None:
                         "avatar.training.progress",
                         {
                             "avatarId": avatar_id,
+                            "operationId": operation_id,
                             "status": "running",
                             "progressPercent": progress,
                             "retryAttempt": profile.training_attempt_count,
@@ -532,6 +922,7 @@ async def _start_lora_training(avatar_id: int) -> None:
                     "avatar.training.completed",
                     {
                         "avatarId": avatar_id,
+                        "operationId": operation_id,
                         "status": "completed",
                         "progressPercent": 100,
                         "retryAttempt": profile.training_attempt_count,
@@ -553,6 +944,7 @@ async def _start_lora_training(avatar_id: int) -> None:
                         "avatar.training.retrying",
                         {
                             "avatarId": avatar_id,
+                            "operationId": operation_id,
                             "status": "retrying",
                             "progressPercent": 0,
                             "retryAttempt": profile.training_attempt_count,
@@ -573,6 +965,7 @@ async def _start_lora_training(avatar_id: int) -> None:
                     "avatar.training.failed",
                     {
                         "avatarId": avatar_id,
+                        "operationId": operation_id,
                         "status": "failed",
                         "progressPercent": 0,
                         "retryAttempt": profile.training_attempt_count,
@@ -580,8 +973,11 @@ async def _start_lora_training(avatar_id: int) -> None:
                         "message": "Failed",
                     },
                 )
+        finally:
+            training_ops.pop(avatar_id, None)
 
     training_tasks[avatar_id] = asyncio.create_task(_run())
+    return operation_id
 
 
 @router.post(
@@ -592,6 +988,12 @@ async def create_avatar_draft(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    if payload.ownership_scope == "org":
+        raise HTTPException(
+            status_code=422,
+            detail="Org avatar creation is disabled until org membership/admin model is implemented.",
+        )
+
     personal_count_result = await db.execute(
         select(func.count(Avatar.id)).where(
             Avatar.owner_id == current_user["id"],
@@ -623,6 +1025,19 @@ async def create_avatar_draft(
     if not created:
         raise HTTPException(status_code=500, detail="Failed to create draft")
     return _avatar_detail_response(created)
+
+
+@router.post("", response_model=AvatarDetailResponse, status_code=status.HTTP_201_CREATED)
+async def create_avatar_draft_alias(
+    payload: AvatarDraftCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    return await create_avatar_draft(
+        payload=payload,
+        db=db,
+        current_user=current_user,
+    )
 
 
 @router.get("", response_model=AvatarsHubResponse)
@@ -665,6 +1080,7 @@ async def get_avatars_hub(
             selectinload(Avatar.visual_profile),
         )
         .where(
+            Avatar.owner_id == user_id,
             Avatar.ownership_scope == "org",
             Avatar.build_state == AvatarBuildState.READY,
             Avatar.build_state != AvatarBuildState.SOFT_DELETED,
@@ -840,6 +1256,36 @@ async def get_avatar(
     return _avatar_detail_response(avatar)
 
 
+@router.get("/{avatar_id}/readiness", response_model=AvatarReadinessResponse)
+async def get_avatar_readiness(
+    avatar_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    avatar = await _fetch_avatar_with_relations(db, avatar_id)
+    if not avatar or not _can_read_avatar(avatar, current_user["id"]):
+        raise HTTPException(status_code=404, detail="Avatar not found")
+    context = await _build_completion_context(db, avatar)
+    readiness = derive_avatar_readiness(avatar.build_state, context)
+    return AvatarReadinessResponse(
+        avatar_id=avatar.id,
+        build_state=avatar.build_state.value,
+        current_step=readiness.current_step,
+        can_complete_avatar=readiness.can_complete_avatar,
+        completion_blockers=readiness.completion_blockers,
+        steps=[
+            {
+                "step_id": step.step_id,
+                "step_name": step.step_name,
+                "is_complete": step.is_complete,
+                "can_enter": step.can_enter,
+                "blocked_reasons": step.blocked_reasons,
+            }
+            for step in readiness.steps
+        ],
+    )
+
+
 @router.patch("/{avatar_id}", response_model=AvatarDetailResponse)
 async def update_avatar(
     avatar_id: int,
@@ -850,13 +1296,20 @@ async def update_avatar(
     avatar = await _fetch_avatar_with_relations(db, avatar_id)
     if not avatar or not _can_edit_avatar(avatar, current_user["id"]):
         raise HTTPException(status_code=404, detail="Avatar not found")
+    _assert_visual_mutable(avatar)
 
     update_data = payload.model_dump(exclude_unset=True)
     locked_paths = {lock.field_path for lock in avatar.field_locks if lock.is_locked}
 
+    command = update_data.pop("command", None)
+    if command == "save_and_exit":
+        command = "save_draft"
+    if update_data.pop("complete_avatar", False):
+        command = "complete_avatar"
+    command = command or "save_draft"
+
     changed_fields = set(update_data.keys()) - {
         "personality_payload",
-        "complete_avatar",
     }
     if avatar.source_type == "clone":
         locked_hit = [field for field in changed_fields if field in locked_paths]
@@ -878,7 +1331,6 @@ async def update_avatar(
         "backstory",
         "industry_id",
         "role_paragraph",
-        "active_card_image_url",
     ]:
         if field in update_data:
             setattr(avatar, field, update_data[field])
@@ -886,6 +1338,13 @@ async def update_avatar(
     personality_payload = update_data.get("personality_payload")
     if personality_payload:
         parsed_payload = personality_payload
+        if avatar.source_type == "clone":
+            nested_hits = _nested_lock_hits(locked_paths, parsed_payload, "personality_payload")
+            if nested_hits:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Field(s) locked for this clone: {', '.join(sorted(set(nested_hits)))}",
+                )
         if parsed_payload.get("backstory"):
             avatar.backstory = parsed_payload["backstory"]
         if parsed_payload.get("communication_principles"):
@@ -906,25 +1365,16 @@ async def update_avatar(
         )
         db.add(snapshot)
 
-    if payload.complete_avatar:
-        refs_result = await db.execute(
-            select(ReferenceSlot).where(ReferenceSlot.avatar_id == avatar.id)
-        )
-        references = refs_result.scalars().all()
-        _validate_completion(avatar, references)
-        avatar.build_state = AvatarBuildState.READY
-        await db.commit()
+    context = await _build_completion_context(db, avatar)
+    readiness = derive_avatar_readiness(avatar.build_state, context)
+    try:
+        avatar.build_state = apply_avatar_command(avatar.build_state, command, readiness)
+    except AvatarTransitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await db.commit()
+    if command == "complete_avatar" and avatar.build_state == AvatarBuildState.READY:
         await _schedule_reaction_generation(avatar.id)
-    else:
-        if avatar.build_state in {
-            AvatarBuildState.DRAFT_APPEARANCE,
-            AvatarBuildState.TRAINING_LORA,
-            AvatarBuildState.FAILED_TRAINING,
-        }:
-            pass
-        elif avatar.build_state != AvatarBuildState.READY:
-            avatar.build_state = AvatarBuildState.DRAFT_PERSONALITY
-        await db.commit()
 
     refreshed = await _fetch_avatar_with_relations(db, avatar.id)
     if not refreshed:
@@ -968,7 +1418,7 @@ async def toggle_visibility(
     current_user: dict = Depends(get_current_user),
 ):
     avatar = await _fetch_avatar_with_relations(db, avatar_id)
-    if not avatar or avatar.owner_id != current_user["id"]:
+    if not avatar or not can_toggle_visibility(avatar, current_user["id"]):
         raise HTTPException(status_code=404, detail="Avatar not found")
 
     if payload.is_public and not _is_public_eligible(avatar):
@@ -1027,13 +1477,7 @@ async def clone_avatar(
     if not source_avatar:
         raise HTTPException(status_code=404, detail="Source avatar not found")
 
-    if (
-        source_avatar.build_state != AvatarBuildState.READY
-        or not source_avatar.is_public
-        or source_avatar.ownership_scope != "personal"
-        or source_avatar.source_type != "original"
-        or source_avatar.deleted_at is not None
-    ):
+    if not can_clone_avatar(source_avatar):
         raise HTTPException(
             status_code=400, detail="Source avatar is not clone-eligible"
         )
@@ -1085,7 +1529,7 @@ async def deploy_avatar(
     current_user: dict = Depends(get_current_user),
 ):
     avatar = await _fetch_avatar_with_relations(db, avatar_id)
-    if not avatar or not _can_edit_avatar(avatar, current_user["id"]):
+    if not avatar or not can_use_avatar(avatar, current_user["id"]):
         raise HTTPException(status_code=404, detail="Avatar not found")
 
     if avatar.build_state != AvatarBuildState.READY:
@@ -1149,7 +1593,7 @@ async def pause_avatar(
     current_user: dict = Depends(get_current_user),
 ):
     avatar = await _fetch_avatar_with_relations(db, avatar_id)
-    if not avatar or not _can_edit_avatar(avatar, current_user["id"]):
+    if not avatar or not can_use_avatar(avatar, current_user["id"]):
         raise HTTPException(status_code=404, detail="Avatar not found")
 
     active_bindings = [
@@ -1171,10 +1615,12 @@ async def pause_avatar(
                 detail="Multiple active bindings found; specify automation_ids",
             )
     else:
-        target_ids = payload.automation_ids
+        target_ids = payload.automation_ids or []
+
+    target_id_set = set(target_ids)
 
     for binding in active_bindings:
-        if binding.id in target_ids:
+        if binding.id in target_id_set:
             binding.status = AutomationBindingStatus.PAUSED
 
     await db.commit()
@@ -1194,7 +1640,7 @@ async def pause_avatar(
 
 
 @router.post(
-    "/{avatar_id}/generate-base", response_model=GenerationResponse, status_code=202
+    "/{avatar_id}/generate-base", response_model=AsyncAcceptedResponse, status_code=202
 )
 async def generate_base_image(
     avatar_id: int,
@@ -1206,81 +1652,21 @@ async def generate_base_image(
     if not avatar or not _can_edit_avatar(avatar, current_user["id"]):
         raise HTTPException(status_code=404, detail="Avatar not found")
 
-    if avatar.source_type == "clone":
-        raise HTTPException(
-            status_code=400, detail="Clone visual identity is immutable"
-        )
-
-    version_result = await db.execute(
-        select(func.max(VisualVersion.version_number)).where(
-            VisualVersion.avatar_id == avatar.id
-        )
-    )
-    next_version = (version_result.scalar() or 0) + 1
-
-    try:
-        enhanced_prompt = PromptTemplateService.get_step1_new_generation_prompt(
-            payload.prompt, payload.age
-        )
-        result = await fal_service.submit_and_wait(
-            model=payload.model,
-            prompt=enhanced_prompt,
-            aspect_ratio=payload.aspect_ratio,
-            is_edit=False,
-        )
-    except FalServiceError as error:
-        raise HTTPException(status_code=500, detail=str(error))
-
-    fal_url = result["images"][0]["url"]
-    filename = f"base_v{next_version}_{uuid.uuid4().hex[:8]}.png"
-    s3_url = await media_service.download_and_store(
-        fal_url, avatar.id, "visual", filename
+    _assert_visual_mutable(avatar)
+    operation_id = await _start_visual_generation(
+        avatar_id=avatar.id, payload=payload.model_dump(), is_edit=False
     )
 
-    if await _should_invalidate_step2_outputs(db, avatar):
-        await _invalidate_step2_outputs(db, avatar)
-
-    await db.execute(
-        update(VisualVersion)
-        .where(VisualVersion.avatar_id == avatar.id)
-        .values(is_active_base=False)
-    )
-
-    visual_version = VisualVersion(
+    return AsyncAcceptedResponse(
+        operation_id=operation_id,
         avatar_id=avatar.id,
-        version_number=next_version,
-        image_url=s3_url,
-        fal_request_id=result.get("request_id"),
-        prompt=payload.prompt,
-        enhanced_prompt=enhanced_prompt,
-        model_used=payload.model,
-        aspect_ratio=payload.aspect_ratio,
-        quality="medium"
-        if payload.model in {"openai_image_1_5", "google_nano_banana_2"}
-        else "auto_3K",
-        is_edit=False,
-        edit_source_url=fal_url,
-        is_active_base=True,
-    )
-    db.add(visual_version)
-    avatar.active_card_image_url = s3_url
-    avatar.build_state = AvatarBuildState.DRAFT_APPEARANCE
-
-    await _enforce_visual_history_cap(db, avatar.id)
-    await db.commit()
-
-    return GenerationResponse(
-        version_id=visual_version.id,
-        version_number=visual_version.version_number,
-        image_url=visual_version.image_url,
-        prompt=payload.prompt,
-        model=payload.model,
-        aspect_ratio=payload.aspect_ratio,
+        operation="generate_base",
+        started_at=datetime.now(timezone.utc),
     )
 
 
 @router.post(
-    "/{avatar_id}/edit-base", response_model=GenerationResponse, status_code=202
+    "/{avatar_id}/edit-base", response_model=AsyncAcceptedResponse, status_code=202
 )
 async def edit_base_image(
     avatar_id: int,
@@ -1292,10 +1678,7 @@ async def edit_base_image(
     if not avatar or not _can_edit_avatar(avatar, current_user["id"]):
         raise HTTPException(status_code=404, detail="Avatar not found")
 
-    if avatar.source_type == "clone":
-        raise HTTPException(
-            status_code=400, detail="Clone visual identity is immutable"
-        )
+    _assert_visual_mutable(avatar)
 
     if payload.mask_image_url and payload.model != "openai_image_1_5":
         raise HTTPException(
@@ -1303,88 +1686,18 @@ async def edit_base_image(
             detail="Mask editing is only supported for ChatGPT Image (openai_image_1_5)",
         )
 
-    base_version_result = await db.execute(
-        select(VisualVersion)
-        .where(VisualVersion.avatar_id == avatar.id, VisualVersion.is_active_base)
-        .order_by(VisualVersion.version_number.desc())
-        .limit(1)
-    )
-    base_version = base_version_result.scalar_one_or_none()
-    if not base_version:
-        raise HTTPException(status_code=400, detail="No active base image selected")
-
-    version_result = await db.execute(
-        select(func.max(VisualVersion.version_number)).where(
-            VisualVersion.avatar_id == avatar.id
-        )
-    )
-    next_version = (version_result.scalar() or 0) + 1
-
-    try:
-        enhanced_prompt = PromptTemplateService.get_step1_edit_prompt(
-            payload.prompt, payload.age
-        )
-        reference_images = [url for url in (payload.reference_image_urls or []) if url]
-        if not reference_images:
-            reference_images = [base_version.edit_source_url or base_version.image_url]
-
-        result = await fal_service.submit_and_wait(
-            model=payload.model,
-            prompt=enhanced_prompt,
-            aspect_ratio=payload.aspect_ratio or base_version.aspect_ratio,
-            is_edit=True,
-            image_urls=reference_images,
-            mask_image_url=payload.mask_image_url,
-        )
-    except FalServiceError as error:
-        raise HTTPException(status_code=500, detail=str(error))
-
-    fal_url = result["images"][0]["url"]
-    filename = f"edit_v{next_version}_{uuid.uuid4().hex[:8]}.png"
-    s3_url = await media_service.download_and_store(
-        fal_url, avatar.id, "visual", filename
-    )
-
-    if await _should_invalidate_step2_outputs(db, avatar):
-        await _invalidate_step2_outputs(db, avatar)
-
-    await db.execute(
-        update(VisualVersion)
-        .where(VisualVersion.avatar_id == avatar.id)
-        .values(is_active_base=False)
-    )
-
-    visual_version = VisualVersion(
+    operation_id = await _start_visual_generation(
         avatar_id=avatar.id,
-        version_number=next_version,
-        image_url=s3_url,
-        fal_request_id=result.get("request_id"),
-        prompt=payload.prompt,
-        enhanced_prompt=enhanced_prompt,
-        model_used=payload.model,
-        aspect_ratio=payload.aspect_ratio or base_version.aspect_ratio,
-        quality="medium"
-        if payload.model in {"openai_image_1_5", "google_nano_banana_2"}
-        else "auto_3K",
+        payload=payload.model_dump(),
         is_edit=True,
-        mask_image_url=payload.mask_image_url,
-        edit_source_url=fal_url,
-        is_active_base=True,
+        reference_images=payload.reference_image_urls,
     )
-    db.add(visual_version)
-    avatar.active_card_image_url = s3_url
-    avatar.build_state = AvatarBuildState.DRAFT_APPEARANCE
 
-    await _enforce_visual_history_cap(db, avatar.id)
-    await db.commit()
-
-    return GenerationResponse(
-        version_id=visual_version.id,
-        version_number=visual_version.version_number,
-        image_url=visual_version.image_url,
-        prompt=payload.prompt,
-        model=payload.model,
-        aspect_ratio=payload.aspect_ratio or base_version.aspect_ratio,
+    return AsyncAcceptedResponse(
+        operation_id=operation_id,
+        avatar_id=avatar.id,
+        operation="edit_base",
+        started_at=datetime.now(timezone.utc),
     )
 
 
@@ -1392,6 +1705,7 @@ async def edit_base_image(
 async def set_active_base(
     avatar_id: int,
     version_id: int,
+    confirm_invalidation: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -1399,10 +1713,7 @@ async def set_active_base(
     if not avatar or not _can_edit_avatar(avatar, current_user["id"]):
         raise HTTPException(status_code=404, detail="Avatar not found")
 
-    if avatar.source_type == "clone":
-        raise HTTPException(
-            status_code=400, detail="Clone visual identity is immutable"
-        )
+    _assert_visual_mutable(avatar)
 
     version_result = await db.execute(
         select(VisualVersion).where(
@@ -1414,7 +1725,16 @@ async def set_active_base(
     if not version:
         raise HTTPException(status_code=404, detail="Visual version not found")
 
-    if await _should_invalidate_step2_outputs(db, avatar):
+    requires_invalidation = await _should_invalidate_step2_outputs(db, avatar)
+    if requires_invalidation and not confirm_invalidation:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Changing active base will invalidate references, training, and reactions.",
+                "requires_confirmation": True,
+            },
+        )
+    if requires_invalidation:
         await _invalidate_step2_outputs(db, avatar)
 
     await db.execute(
@@ -1423,8 +1743,9 @@ async def set_active_base(
         .values(is_active_base=False)
     )
     version.is_active_base = True
-    avatar.active_card_image_url = version.image_url
     avatar.build_state = AvatarBuildState.DRAFT_APPEARANCE
+    await db.flush()
+    await _sync_avatar_active_card_from_versions(db, avatar)
 
     await db.commit()
 
@@ -1463,6 +1784,7 @@ async def delete_visual_version(
     avatar = await _fetch_avatar_with_relations(db, avatar_id)
     if not avatar or not _can_edit_avatar(avatar, current_user["id"]):
         raise HTTPException(status_code=404, detail="Avatar not found")
+    _assert_visual_mutable(avatar)
 
     result = await db.execute(
         select(VisualVersion).where(
@@ -1473,13 +1795,43 @@ async def delete_visual_version(
     if not version:
         raise HTTPException(status_code=404, detail="Visual version not found")
 
+    all_versions_result = await db.execute(
+        select(VisualVersion)
+        .where(VisualVersion.avatar_id == avatar.id)
+        .order_by(VisualVersion.version_number.desc())
+    )
+    all_versions = all_versions_result.scalars().all()
+    if len(all_versions) <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one visual version must remain as active base.",
+        )
+
+    was_active = bool(version.is_active_base)
+
     await db.delete(version)
+    if was_active:
+        replacement = next((item for item in all_versions if item.id != version.id), None)
+        if replacement is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to determine replacement active base version.",
+            )
+        await db.execute(
+            update(VisualVersion)
+            .where(VisualVersion.avatar_id == avatar.id)
+            .values(is_active_base=False)
+        )
+        replacement.is_active_base = True
+        avatar.build_state = AvatarBuildState.DRAFT_APPEARANCE
+    await db.flush()
+    await _sync_avatar_active_card_from_versions(db, avatar)
     await db.commit()
 
 
 @router.post(
     "/{avatar_id}/generate-references",
-    response_model=GenerateReferencesResponse,
+    response_model=AsyncAcceptedResponse,
     status_code=202,
 )
 async def generate_references(
@@ -1490,116 +1842,19 @@ async def generate_references(
     avatar = await _fetch_avatar_with_relations(db, avatar_id)
     if not avatar or not _can_edit_avatar(avatar, current_user["id"]):
         raise HTTPException(status_code=404, detail="Avatar not found")
+    _assert_visual_mutable(avatar)
 
-    if avatar.source_type == "clone":
-        raise HTTPException(
-            status_code=400, detail="Clone visual identity is immutable"
-        )
-
-    base_version_result = await db.execute(
-        select(VisualVersion)
-        .where(VisualVersion.avatar_id == avatar.id, VisualVersion.is_active_base)
-        .order_by(VisualVersion.version_number.desc())
-        .limit(1)
-    )
-    base_version = base_version_result.scalar_one_or_none()
-    if not base_version:
-        raise HTTPException(status_code=400, detail="No active base image selected")
-
-    source_image_url = base_version.edit_source_url or base_version.image_url
-    slot_definitions = PromptTemplateService.get_step2_reference_slots()
-
-    existing_result = await db.execute(
-        select(ReferenceSlot).where(ReferenceSlot.avatar_id == avatar.id)
-    )
-    existing_map = {slot.slot_key: slot for slot in existing_result.scalars().all()}
-
-    generated_slots: List[ReferenceSlot] = []
-
-    for slot_def in slot_definitions:
-        slot_key = slot_def["slot_key"]
-        slot_label = slot_def["label"]
-        include_base = slot_def.get("include_base", False)
-
-        if include_base:
-            image_url = base_version.image_url
-            prompt = "Base face"
-        else:
-            slot_prompt = (
-                f"Turn the person in the image to: {slot_def.get('prompt', '')}"
-            )
-            try:
-                result = await fal_service.submit_and_wait(
-                    model="seedream_v5",
-                    prompt=slot_prompt,
-                    aspect_ratio=base_version.aspect_ratio,
-                    is_edit=True,
-                    image_urls=[source_image_url],
-                )
-            except FalServiceError as error:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to generate reference slot {slot_key}: {error}",
-                )
-
-            fal_url = result["images"][0]["url"]
-            filename = f"ref_{slot_key}_{uuid.uuid4().hex[:8]}.png"
-            image_url = await media_service.download_and_store(
-                fal_url, avatar.id, "reference", filename
-            )
-            prompt = slot_prompt
-
-        if slot_key in existing_map:
-            slot = existing_map[slot_key]
-            slot.image_url = image_url
-            slot.prompt = prompt
-            slot.slot_label = slot_label
-            slot.aspect_ratio = base_version.aspect_ratio
-            slot.is_refined = False
-        else:
-            slot = ReferenceSlot(
-                avatar_id=avatar.id,
-                slot_key=slot_key,
-                slot_label=slot_label,
-                image_url=image_url,
-                prompt=prompt,
-                aspect_ratio=base_version.aspect_ratio,
-            )
-            db.add(slot)
-        generated_slots.append(slot)
-
-    expected_keys = {slot["slot_key"] for slot in slot_definitions}
-    for key, stale in existing_map.items():
-        if key not in expected_keys:
-            await db.delete(stale)
-
-    if (
-        avatar.visual_profile
-        and avatar.visual_profile.training_status == AvatarTrainingStatus.COMPLETED
-    ):
-        avatar.visual_profile.training_status = AvatarTrainingStatus.NOT_STARTED
-        avatar.visual_profile.lora_model_id = None
-        avatar.visual_profile.training_completed_at = None
-        avatar.visual_profile.training_error_code = None
-
-    avatar.build_state = AvatarBuildState.DRAFT_APPEARANCE
-    await db.commit()
-
-    refreshed_result = await db.execute(
-        select(ReferenceSlot)
-        .where(ReferenceSlot.avatar_id == avatar.id)
-        .order_by(ReferenceSlot.slot_key.asc())
-    )
-    refreshed = refreshed_result.scalars().all()
-
-    return GenerateReferencesResponse(
-        count=len(refreshed),
-        slots=[ReferenceSlotResponse.model_validate(slot) for slot in refreshed],
+    operation_id = await _start_reference_generation(avatar.id)
+    return AsyncAcceptedResponse(
+        operation_id=operation_id,
+        avatar_id=avatar.id,
+        operation="generate_references",
+        started_at=datetime.now(timezone.utc),
     )
 
 
 @router.post(
-    "/{avatar_id}/train-lora", response_model=AvatarDetailResponse, status_code=202
+    "/{avatar_id}/train-lora", response_model=AsyncAcceptedResponse, status_code=202
 )
 async def train_lora(
     avatar_id: int,
@@ -1610,10 +1865,7 @@ async def train_lora(
     if not avatar or not _can_edit_avatar(avatar, current_user["id"]):
         raise HTTPException(status_code=404, detail="Avatar not found")
 
-    if avatar.source_type == "clone":
-        raise HTTPException(
-            status_code=400, detail="Clone visual identity is immutable"
-        )
+    _assert_visual_mutable(avatar)
 
     refs_result = await db.execute(
         select(ReferenceSlot).where(ReferenceSlot.avatar_id == avatar.id)
@@ -1636,14 +1888,16 @@ async def train_lora(
     avatar.build_state = AvatarBuildState.TRAINING_LORA
     await db.commit()
 
-    await _start_lora_training(avatar.id)
-    refreshed = await _fetch_avatar_with_relations(db, avatar.id)
-    if not refreshed:
-        raise HTTPException(status_code=500, detail="Failed to queue training")
-    return _avatar_detail_response(refreshed)
+    operation_id = await _start_lora_training(avatar.id)
+    return AsyncAcceptedResponse(
+        operation_id=operation_id,
+        avatar_id=avatar.id,
+        operation="train_lora",
+        started_at=datetime.now(timezone.utc),
+    )
 
 
-@router.post("/{avatar_id}/retry-lora", response_model=RetryLoraResponse)
+@router.post("/{avatar_id}/retry-lora", response_model=AsyncAcceptedResponse)
 async def retry_lora(
     avatar_id: int,
     db: AsyncSession = Depends(get_db),
@@ -1652,6 +1906,7 @@ async def retry_lora(
     avatar = await _fetch_avatar_with_relations(db, avatar_id)
     if not avatar or not _can_edit_avatar(avatar, current_user["id"]):
         raise HTTPException(status_code=404, detail="Avatar not found")
+    _assert_visual_mutable(avatar)
 
     profile = await _ensure_visual_profile(db, avatar)
     if profile.training_status != AvatarTrainingStatus.FAILED:
@@ -1664,11 +1919,13 @@ async def retry_lora(
     avatar.build_state = AvatarBuildState.TRAINING_LORA
     await db.commit()
 
-    await _start_lora_training(avatar.id)
-    refreshed = await _fetch_avatar_with_relations(db, avatar.id)
-    if not refreshed:
-        raise HTTPException(status_code=500, detail="Failed to retry training")
-    return RetryLoraResponse(avatar=_avatar_detail_response(refreshed))
+    operation_id = await _start_lora_training(avatar.id)
+    return AsyncAcceptedResponse(
+        operation_id=operation_id,
+        avatar_id=avatar.id,
+        operation="retry_lora",
+        started_at=datetime.now(timezone.utc),
+    )
 
 
 @router.get("/{avatar_id}/events")
@@ -1683,18 +1940,39 @@ async def avatar_events(
 
     queue = event_broker.subscribe(avatar_id)
 
+    backlog_result = await db.execute(
+        select(AvatarEvent)
+        .where(AvatarEvent.avatar_id == avatar_id)
+        .order_by(AvatarEvent.id.desc())
+        .limit(30)
+    )
+    backlog = list(reversed(backlog_result.scalars().all()))
+
     async def stream() -> AsyncIterator[str]:
+        logger.info("New SSE client connected for avatar %d", avatar_id)
         try:
+            for event in backlog:
+                yield f"event: {event.event_type}\ndata: {event.payload_json}\n\n"
             while True:
                 try:
                     message = await asyncio.wait_for(queue.get(), timeout=20)
                     yield message
                 except asyncio.TimeoutError:
                     yield "event: keepalive\ndata: {}\n\n"
+        except Exception as e:
+            logger.info("SSE connection closed for avatar %d: %s", avatar_id, str(e))
         finally:
             event_broker.unsubscribe(avatar_id, queue)
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{avatar_id}/reference-slots", response_model=List[ReferenceSlotResponse])
@@ -1740,7 +2018,8 @@ async def attach_image(
         if file.filename and "." in file.filename
         else "png"
     )
-    filename = f"attachment_{uuid.uuid4().hex[:8]}.{file_ext}"
+    short_id = uuid.uuid4().hex[:8]
+    filename = f"attachment_{short_id}.{file_ext}"
 
     try:
         url = await media_service.upload_reference_image(

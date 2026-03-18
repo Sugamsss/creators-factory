@@ -84,6 +84,12 @@ async def test_create_draft_and_hub_sections(client_and_sessionmaker):
     assert "org_avatars" in payload
     assert len(payload["continue_creation"]) == 1
 
+    alias_response = await client.post(
+        "/api/v1/avatars",
+        json={"ownership_scope": "personal"},
+    )
+    assert alias_response.status_code == 201
+
 
 @pytest.mark.asyncio
 async def test_toggle_visibility_and_clone_flow(client_and_sessionmaker):
@@ -344,7 +350,12 @@ async def test_set_active_base_invalidates_step2_outputs_in_draft_appearance(cli
         avatar.build_state = AvatarBuildState.DRAFT_APPEARANCE
         await session.commit()
 
-    set_active_response = await client.post(f"/api/v1/avatars/{avatar_id}/set-active-base/2")
+    precheck = await client.post(f"/api/v1/avatars/{avatar_id}/set-active-base/2")
+    assert precheck.status_code == 409
+
+    set_active_response = await client.post(
+        f"/api/v1/avatars/{avatar_id}/set-active-base/2?confirm_invalidation=true"
+    )
     assert set_active_response.status_code == 200
 
     async with session_maker() as session:
@@ -407,7 +418,8 @@ async def test_edit_base_accepts_ordered_reference_images_and_persists_mask(clie
         return "https://cdn.example/new.png"
 
     from src.modules.avatars import router as avatars_router
-
+    
+    monkeypatch.setattr(avatars_router, "AsyncSessionLocal", session_maker)
     monkeypatch.setattr(avatars_router.fal_service, "submit_and_wait", fake_submit_and_wait)
     monkeypatch.setattr(avatars_router.media_service, "download_and_store", fake_download_and_store)
 
@@ -429,14 +441,87 @@ async def test_edit_base_accepts_ordered_reference_images_and_persists_mask(clie
     )
 
     assert response.status_code == 202
-    assert captured["image_urls"] == reference_urls
+    
+    import asyncio
+    # Wait for background task to trigger fal_service
+    for _ in range(50):
+        if "image_urls" in captured:
+            break
+        await asyncio.sleep(0.05)
+    
+    assert captured.get("image_urls") == reference_urls
+
+    latest = None
+    # Wait for background task to commit to DB
+    for _ in range(50):
+        async with session_maker() as session:
+            result = await session.execute(
+                select(VisualVersion)
+                .where(VisualVersion.avatar_id == avatar_id)
+                .order_by(VisualVersion.version_number.desc())
+                .limit(1)
+            )
+            latest = result.scalar_one_or_none()
+            if latest and latest.version_number == 2:
+                break
+        await asyncio.sleep(0.05)
+
+    assert latest is not None
+    assert latest.mask_image_url == "data:image/png;base64,BBBB"
+
+
+@pytest.mark.asyncio
+async def test_train_lora_returns_async_accepted_envelope(client_and_sessionmaker):
+    client, session_maker = client_and_sessionmaker
+    await signup(client, email="train-envelope@example.com")
+
+    draft_response = await client.post("/api/v1/avatars/drafts", json={"ownership_scope": "personal"})
+    avatar_id = draft_response.json()["id"]
 
     async with session_maker() as session:
-        result = await session.execute(
-            select(VisualVersion)
-            .where(VisualVersion.avatar_id == avatar_id)
-            .order_by(VisualVersion.version_number.desc())
-            .limit(1)
-        )
-        latest = result.scalar_one()
-        assert latest.mask_image_url == "data:image/png;base64,BBBB"
+        avatar = await session.get(Avatar, avatar_id)
+        assert avatar is not None
+        avatar.build_state = AvatarBuildState.DRAFT_APPEARANCE
+        for idx in range(1, 16):
+            session.add(
+                ReferenceSlot(
+                    avatar_id=avatar_id,
+                    slot_key=f"slot_{idx}",
+                    slot_label=f"Slot {idx}",
+                    image_url=f"https://example.com/ref-{idx}.png",
+                    prompt="slot",
+                    aspect_ratio="16:9",
+                )
+            )
+        await session.commit()
+
+    response = await client.post(f"/api/v1/avatars/{avatar_id}/train-lora")
+    assert response.status_code == 202
+    body = response.json()
+    assert body["accepted"] is True
+    assert body["operation"] == "train_lora"
+    assert body["avatar_id"] == avatar_id
+    assert isinstance(body["operation_id"], str)
+
+
+@pytest.mark.asyncio
+async def test_readiness_endpoint_and_active_card_patch_block(client_and_sessionmaker):
+    client, _ = client_and_sessionmaker
+    await signup(client, email="readiness@example.com")
+
+    draft_response = await client.post("/api/v1/avatars/drafts", json={"ownership_scope": "personal"})
+    avatar_id = draft_response.json()["id"]
+
+    readiness_response = await client.get(f"/api/v1/avatars/{avatar_id}/readiness")
+    assert readiness_response.status_code == 200
+    readiness = readiness_response.json()
+    assert readiness["current_step"] == 1
+    assert readiness["can_complete_avatar"] is False
+    assert len(readiness["steps"]) == 3
+
+    patch_response = await client.patch(
+        f"/api/v1/avatars/{avatar_id}",
+        json={"active_card_image_url": "https://malicious.example.com/override.png"},
+    )
+    assert patch_response.status_code == 200
+    assert patch_response.json()["active_card_image_url"] is None

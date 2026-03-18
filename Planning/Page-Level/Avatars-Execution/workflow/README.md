@@ -26,6 +26,7 @@ This workflow folder tells agents:
 5. `02-Agent-Operating-Rules.md`
 6. `04-Handoffs-and-Blockers.md`
 7. `05-Definition-of-Done.md`
+8. `../08-Temporary-Behavior-Register.md`
 
 ## Rules
 

@@ -14,6 +14,7 @@ export interface AvatarCardProps {
   role?: string;
   isTraining?: boolean;
   isActive?: boolean;
+  badges?: string[];
   type: "draft" | "deployment";
   actionLabel?: string;
   actionIcon?: string;
@@ -39,6 +40,7 @@ export function AvatarCard({
   role,
   isTraining,
   isActive,
+  badges = [],
   type,
   actionLabel,
   actionIcon,
@@ -133,14 +135,25 @@ export function AvatarCard({
           </motion.div>
         )}
 
-        {/* Active Pulse Badge */}
-        {isActive && (
-          <div className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-[#1a3a2a]/80 backdrop-blur-md px-2.5 py-1 text-[7px] font-semibold uppercase tracking-[0.12em] text-white shadow-lg z-20">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#3c9f95] opacity-60"></span>
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-white"></span>
-            </span>
-            Active
+        {(isActive || badges.length > 0) && (
+          <div className="absolute right-3 top-3 z-20 flex flex-col items-end gap-1">
+            {isActive && (
+              <div className="flex items-center gap-1.5 rounded-full bg-[#1a3a2a]/80 backdrop-blur-md px-2.5 py-1 text-[7px] font-semibold uppercase tracking-[0.12em] text-white shadow-lg">
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#3c9f95] opacity-60"></span>
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-white"></span>
+                </span>
+                Active
+              </div>
+            )}
+            {badges.map((badge) => (
+              <span
+                key={badge}
+                className="rounded-full border border-white/60 bg-white/90 px-2 py-0.5 text-[7px] font-bold uppercase tracking-[0.12em] text-[#1a3a2a] shadow-sm"
+              >
+                {badge}
+              </span>
+            ))}
           </div>
         )}
 

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 sys.path.insert(0, "/Users/sugam/Personal Projects/Creators Factory/backend")
 
 from src.core.security import create_access_token, create_refresh_token, decode_token
+import src.services.ai.fal_service as fal_module
 from src.services.ai.fal_service import ASPECT_RATIO_MAP, QUALITY_SETTINGS, FalService
 from src.services.ai.media_service import MediaStorageService
 
@@ -71,6 +72,57 @@ def test_quality_settings():
     assert QUALITY_SETTINGS["openai_image_1_5"] == "medium"
     assert QUALITY_SETTINGS["google_nano_banana_2"] == "medium"
     assert QUALITY_SETTINGS["seedream_v5"] == "auto_3K"
+
+
+def test_fal_key_fallback_env(monkeypatch):
+    monkeypatch.setattr(fal_module.settings, "FAL_API_KEY", "")
+    monkeypatch.setattr(fal_module.settings, "FAL_KEY", "")
+    monkeypatch.setenv("FAL_KEY", "env-fallback-key")
+    service = FalService()
+    assert service.api_key == "env-fallback-key"
+
+
+def test_fal_normalize_images_handles_nested_shapes():
+    service = FalService()
+    payload = {
+        "result": {
+            "output": {
+                "images": [
+                    {"url": "https://cdn.example.com/a.png"},
+                    {"image_url": "https://cdn.example.com/b.png"},
+                ]
+            }
+        }
+    }
+    images = service._normalize_images(payload)
+    assert images == [
+        {"url": "https://cdn.example.com/a.png"},
+        {"url": "https://cdn.example.com/b.png"},
+    ]
+
+
+def test_wait_for_completion_supports_response_url(monkeypatch):
+    service = FalService()
+
+    statuses = [
+        {"status": "IN_QUEUE"},
+        {"status": "COMPLETED", "response_url": "https://queue.fal.run/fake-result"},
+    ]
+
+    async def fake_status(endpoint: str, request_id: str, *, status_url=None):
+        return statuses.pop(0)
+
+    async def fake_result(endpoint: str, request_id: str, *, result_url=None):
+        assert result_url == "https://queue.fal.run/fake-result"
+        return {"images": [{"url": "https://cdn.example.com/final.png"}]}
+
+    monkeypatch.setattr(service, "get_request_status", fake_status)
+    monkeypatch.setattr(service, "get_request_result", fake_result)
+    service.poll_interval_seconds = 0
+
+    result = asyncio.run(service.wait_for_completion("fal-ai/gpt-image-1.5", "req-1"))
+    assert result["request_id"] == "req-1"
+    assert result["images"][0]["url"] == "https://cdn.example.com/final.png"
 
 
 def test_access_and_refresh_tokens_are_typed():

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AvatarCard, LoadMoreButton } from "@/shared/ui";
 import { SearchBar } from "@/shared/ui/search-bar";
@@ -11,11 +11,12 @@ import {
   cloneAvatar,
   deleteAvatar,
   deployAvatar,
+  listAvatarIndustries,
   listAutomations,
   pauseAvatar,
   retryLora,
 } from "@/features/avatars/services/avatarApi";
-import type { AvatarCardModel } from "@/features/avatars/types";
+import type { AvatarCardModel, AvatarIndustry } from "@/features/avatars/types";
 
 interface AutomationOption {
   id: number;
@@ -244,10 +245,9 @@ export default function AvatarsPage() {
   const [sortOpen, setSortOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFilters] = useState({
-    gender: "",
-    ageRange: "",
-    industry: "",
+    industryId: "" as "" | number,
   });
+  const [industryOptions, setIndustryOptions] = useState<AvatarIndustry[]>([]);
   const [busyAvatarId, setBusyAvatarId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -265,6 +265,34 @@ export default function AvatarsPage() {
   const [isDialogLoading, setIsDialogLoading] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [deployConfirmReplace, setDeployConfirmReplace] = useState(false);
+
+  useEffect(() => {
+    void listAvatarIndustries()
+      .then(setIndustryOptions)
+      .catch(() => setIndustryOptions([]));
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSortOpen(false);
+        setFilterOpen(false);
+      }
+    };
+    const handleDocumentClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("[data-explore-controls]")) return;
+      setSortOpen(false);
+      setFilterOpen(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("click", handleDocumentClick);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("click", handleDocumentClick);
+    };
+  }, []);
 
   const resetDialogState = useCallback(() => {
     setAutomations([]);
@@ -284,7 +312,6 @@ export default function AvatarsPage() {
       const data = await listAutomations();
       setAutomations(
         data
-          .filter((item) => item.avatar_id === avatar.id)
           .map((item) => ({
             id: item.id,
             name: item.name,
@@ -297,7 +324,7 @@ export default function AvatarsPage() {
     } finally {
       setIsDialogLoading(false);
     }
-  }, []);
+  }, [resetDialogState]);
 
   const openPause = useCallback(async (avatar: AvatarCardModel) => {
     setDeployAvatarTarget(null);
@@ -336,7 +363,7 @@ export default function AvatarsPage() {
     } finally {
       setIsDialogLoading(false);
     }
-  }, [refetch]);
+  }, [refetch, resetDialogState]);
 
   const handleSearchChange = useCallback(
     (value: string) => {
@@ -350,20 +377,6 @@ export default function AvatarsPage() {
       );
     },
     [fetchExploreWithParams, sortBy]
-  );
-
-  const handleSortChange = useCallback(
-    (sort: "featured" | "popular" | "newest") => {
-      setSortBy(sort);
-      void fetchExploreWithParams(
-        {
-          search: searchQuery || undefined,
-          sort,
-        },
-        true
-      );
-    },
-    [fetchExploreWithParams, searchQuery]
   );
 
   const handleCreate = async () => {
@@ -493,16 +506,14 @@ export default function AvatarsPage() {
         {
           search: searchQuery || undefined,
           sort: sortBy,
-          gender: filters.gender || undefined,
-          ageRange: filters.ageRange || undefined,
-          industry: filters.industry || undefined,
+          industryId: typeof filters.industryId === "number" ? filters.industryId : undefined,
         },
         true
       );
     };
 
     return (
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3" data-explore-controls>
         <SearchBar
           placeholder="Search..."
           value={searchQuery}
@@ -552,42 +563,24 @@ export default function AvatarsPage() {
             <div className="absolute right-0 top-full z-50 mt-1.5 w-56 rounded-xl border border-[#d6dbd4] bg-white p-4 shadow-lg">
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1.5 block text-[9px] font-bold uppercase tracking-widest text-[#8ca1c5]">Gender</label>
-                  <select
-                    value={filters.gender}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, gender: e.target.value }))}
-                    className="w-full rounded-lg border border-[#d6dbd4] bg-[#fafcfb] px-3 py-2 text-xs font-medium text-[#1a3a2a]"
-                  >
-                    <option value="">All Genders</option>
-                    <option value="male">Male</option>
-                    <option value="female">Female</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-[9px] font-bold uppercase tracking-widest text-[#8ca1c5]">Age Range</label>
-                  <select
-                    value={filters.ageRange}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, ageRange: e.target.value }))}
-                    className="w-full rounded-lg border border-[#d6dbd4] bg-[#fafcfb] px-3 py-2 text-xs font-medium text-[#1a3a2a]"
-                  >
-                    <option value="">All Ages</option>
-                    <option value="18-25">18-25</option>
-                    <option value="26-35">26-35</option>
-                    <option value="36-45">36-45</option>
-                    <option value="46-55">46-55</option>
-                    <option value="55+">55+</option>
-                  </select>
-                </div>
-                <div>
                   <label className="mb-1.5 block text-[9px] font-bold uppercase tracking-widest text-[#8ca1c5]">Industry</label>
-                  <input
-                    type="text"
-                    placeholder="Enter industry..."
-                    value={filters.industry}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, industry: e.target.value }))}
-                    className="w-full rounded-lg border border-[#d6dbd4] bg-[#fafcfb] px-3 py-2 text-xs font-medium text-[#1a3a2a] placeholder:text-[#8ca1c5]/50"
-                  />
+                  <select
+                    value={filters.industryId === "" ? "" : String(filters.industryId)}
+                    onChange={(e) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        industryId: e.target.value ? Number(e.target.value) : "",
+                      }))
+                    }
+                    className="w-full rounded-lg border border-[#d6dbd4] bg-[#fafcfb] px-3 py-2 text-xs font-medium text-[#1a3a2a]"
+                  >
+                    <option value="">All Industries</option>
+                    {industryOptions.map((industry) => (
+                      <option key={industry.id} value={industry.id}>
+                        {industry.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <button
                   onClick={handleFilterApply}
@@ -601,7 +594,16 @@ export default function AvatarsPage() {
         </div>
       </div>
     );
-  }, [searchQuery, sortBy, sortOpen, filterOpen, filters, handleSearchChange, fetchExploreWithParams]);
+  }, [
+    searchQuery,
+    sortBy,
+    sortOpen,
+    filterOpen,
+    filters,
+    industryOptions,
+    handleSearchChange,
+    fetchExploreWithParams,
+  ]);
 
   return (
     <PageContainer>
@@ -642,7 +644,9 @@ export default function AvatarsPage() {
               onTertiaryAction={() => setDeleteAvatarTarget(avatar)}
             />
           ))}
-          {safeDrafts.length === 0 && !isLoading && <p className="text-sm text-muted">No drafts in progress.</p>}
+          {safeDrafts.length === 0 && !isLoading && (
+            <p className="text-sm text-muted">No drafts yet. Start a new avatar to begin Phase 1.</p>
+          )}
         </div>
       </section>
 
@@ -665,6 +669,11 @@ export default function AvatarsPage() {
             const deploymentSummary =
               typeof avatar.deployment_summary === "string" ? avatar.deployment_summary : null;
             const showPause = deploymentSummary === "in_use" || deploymentSummary === "partially_paused";
+            const badges = [
+              avatar.source_type === "clone" ? "Cloned" : null,
+              avatar.is_public ? "Public" : null,
+              deploymentSummary?.includes("paused") ? "Paused" : null,
+            ].filter(Boolean) as string[];
             return (
               <AvatarCard
                 key={avatar.id}
@@ -674,6 +683,7 @@ export default function AvatarsPage() {
                 role={avatar.role_paragraph || "Avatar"}
                 status={getDeploymentStatusLabel(deploymentSummary)}
                 statusTone={deploymentSummary?.includes("paused") ? "amber" : "green"}
+                badges={badges}
                 modified={formatModified(avatar.updated_at)}
                 type="deployment"
                 actionLabel={busyAvatarId === avatar.id ? "Working..." : "Edit"}
@@ -691,7 +701,9 @@ export default function AvatarsPage() {
               />
             );
           })}
-          {safeMyAvatars.length === 0 && !isLoading && <p className="text-sm text-muted">No completed avatars yet.</p>}
+          {safeMyAvatars.length === 0 && !isLoading && (
+            <p className="text-sm text-muted">No completed avatars yet. Complete all 3 creation steps to see them here.</p>
+          )}
         </div>
       </section>
 
@@ -713,6 +725,7 @@ export default function AvatarsPage() {
           {safeOrgAvatars.map((avatar) => {
             const deploymentSummary =
               typeof avatar.deployment_summary === "string" ? avatar.deployment_summary : null;
+            const badges = [deploymentSummary?.includes("paused") ? "Paused" : null].filter(Boolean) as string[];
             return (
             <AvatarCard
               key={avatar.id}
@@ -722,6 +735,7 @@ export default function AvatarsPage() {
               role={avatar.role_paragraph || "Org Avatar"}
               status={getDeploymentStatusLabel(deploymentSummary)}
               statusTone={deploymentSummary?.includes("paused") ? "amber" : "green"}
+              badges={badges}
               modified={formatModified(avatar.updated_at)}
               type="deployment"
               actionLabel="Use"
@@ -732,7 +746,9 @@ export default function AvatarsPage() {
               onSecondaryAction={() => void openPause(avatar)}
             />
           );})}
-          {safeOrgAvatars.length === 0 && !isLoading && <p className="text-sm text-muted">No org avatars available.</p>}
+          {safeOrgAvatars.length === 0 && !isLoading && (
+            <p className="text-sm text-muted">No organization avatars available for your account.</p>
+          )}
         </div>
       </section>
 
@@ -754,7 +770,9 @@ export default function AvatarsPage() {
             />
           ))}
           {safeExploreAvatars.length === 0 && !isLoading && (
-            <p className="w-full py-10 text-center text-sm text-muted">No public avatars found for the current filters.</p>
+            <p className="w-full py-10 text-center text-sm text-muted">
+              No public avatars found. Try clearing the search or choosing a different industry.
+            </p>
           )}
         </div>
 

@@ -78,8 +78,6 @@ def test_prompt_structure():
     new_gen = PromptTemplateService.get_step1_new_generation_prompt("test", age=10)
 
     # Should have the key elements
-    assert "Photorealistic studio portrait" in new_gen
-    assert "Canon EOS R5" in new_gen
     assert "test, age 10" in new_gen
 
     edit = PromptTemplateService.get_step1_edit_prompt("test edit", age=20)

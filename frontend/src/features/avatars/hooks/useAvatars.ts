@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type {
   AvatarCardModel,
-  AvatarIndustry,
   ExploreAvatar,
 } from "../types";
 import {
@@ -13,9 +12,7 @@ import {
 interface ExploreParams {
   search?: string;
   sort?: "featured" | "popular" | "newest";
-  gender?: string;
-  ageRange?: string;
-  industry?: string;
+  industryId?: number;
 }
 
 export function useAvatars() {
@@ -76,9 +73,7 @@ export function useAvatars() {
         const response = await getExploreAvatars({
           search: params.search,
           sort: params.sort,
-          gender: params.gender,
-          ageRange: params.ageRange,
-          industry: params.industry,
+          industryId: params.industryId,
         });
 
         if (reset) {
@@ -107,9 +102,7 @@ export function useAvatars() {
       const response = await getExploreAvatars({
         search: exploreParams.search,
         sort: exploreParams.sort,
-        gender: exploreParams.gender,
-        ageRange: exploreParams.ageRange,
-        industry: exploreParams.industry,
+        industryId: exploreParams.industryId,
         cursor: exploreCursor,
       });
 

@@ -42,8 +42,8 @@ export interface AvatarCardModel {
   active_card_image_url: string | null;
   build_state: AvatarBuildState;
   deployment_summary: AvatarDeploymentSummary | null;
-  ownership_scope: "personal" | "org" | string;
-  source_type: "original" | "clone" | string;
+  ownership_scope: "personal" | "org";
+  source_type: "original" | "clone";
   source_avatar_id: number | null;
   is_public: boolean;
   clone_count: number;

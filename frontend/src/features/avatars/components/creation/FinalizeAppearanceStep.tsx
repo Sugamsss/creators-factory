@@ -16,6 +16,17 @@ interface FinalizeAppearanceStepProps {
   avatarId: string;
 }
 
+function toTrainingLabel(status?: string, message?: string): string {
+  if (status === "retrying") return "Retrying";
+  if (status === "failed") return "Failed";
+  if (status === "completed") return "Completed";
+  if (status === "queued" || status === "not_started") return "Preparing dataset";
+  const normalized = (message || "").toLowerCase();
+  if (normalized.includes("validat")) return "Validating";
+  if (normalized.includes("prepar")) return "Preparing dataset";
+  return "Training";
+}
+
 export function FinalizeAppearanceStep({ avatarId }: FinalizeAppearanceStepProps) {
   const [slots, setSlots] = useState<ReferenceSlot[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -25,6 +36,7 @@ export function FinalizeAppearanceStep({ avatarId }: FinalizeAppearanceStepProps
   const [trainingEta, setTrainingEta] = useState<number | null>(null);
   const [trainingMessage, setTrainingMessage] = useState<string>("Not started");
   const [canRetryTraining, setCanRetryTraining] = useState(false);
+  const [referenceProgress, setReferenceProgress] = useState<{current: number, total: number} | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fetchState = useCallback(async () => {
@@ -38,7 +50,7 @@ export function FinalizeAppearanceStep({ avatarId }: FinalizeAppearanceStepProps
       const status = avatar.training_summary?.status || "not_started";
       setIsTraining(status === "running" || status === "queued" || status === "retrying");
       setCanRetryTraining(status === "failed");
-      setTrainingMessage(status.replaceAll("_", " "));
+      setTrainingMessage(toTrainingLabel(status));
     } catch (fetchError) {
       console.error("Failed to fetch appearance state:", fetchError);
       setError(fetchError instanceof Error ? fetchError.message : "Failed to load appearance state");
@@ -52,29 +64,32 @@ export function FinalizeAppearanceStep({ avatarId }: FinalizeAppearanceStepProps
   }, [fetchState]);
 
   useEffect(() => {
+    console.log(`Setting up SSE connection for avatar ${avatarId} (FinalizeAppearance)...`);
     const source = subscribeAvatarEvents(
-      Number(avatarId),
+      Number(avatarId), 
       (eventType, payload) => {
+        console.log("FinalizeAppearance received event:", eventType, payload);
+        
         if (eventType === "avatar.training.started") {
           setIsTraining(true);
           setCanRetryTraining(false);
           setTrainingProgress(Number(payload.progressPercent || 0));
           setTrainingEta(Number(payload.etaSeconds || 0));
-          setTrainingMessage(String(payload.message || "Preparing dataset"));
+          setTrainingMessage(toTrainingLabel("running", String(payload.message || "Preparing dataset")));
         }
 
         if (eventType === "avatar.training.progress") {
           setIsTraining(true);
           setTrainingProgress(Number(payload.progressPercent || 0));
           setTrainingEta(Number(payload.etaSeconds || 0));
-          setTrainingMessage(String(payload.message || "Training"));
+          setTrainingMessage(toTrainingLabel("running", String(payload.message || "Training")));
         }
 
         if (eventType === "avatar.training.retrying") {
           setIsTraining(true);
           setTrainingProgress(Number(payload.progressPercent || 0));
           setTrainingEta(Number(payload.etaSeconds || 0));
-          setTrainingMessage(String(payload.message || "Retrying"));
+          setTrainingMessage("Retrying");
         }
 
         if (eventType === "avatar.training.failed") {
@@ -82,7 +97,7 @@ export function FinalizeAppearanceStep({ avatarId }: FinalizeAppearanceStepProps
           setCanRetryTraining(true);
           setTrainingProgress(0);
           setTrainingEta(0);
-          setTrainingMessage(String(payload.message || "Failed"));
+          setTrainingMessage("Failed");
         }
 
         if (eventType === "avatar.training.completed") {
@@ -92,13 +107,45 @@ export function FinalizeAppearanceStep({ avatarId }: FinalizeAppearanceStepProps
           setTrainingEta(0);
           setTrainingMessage("Completed");
         }
+
+        if (eventType === "avatar.references.generation.started") {
+          setIsGenerating(true);
+          setReferenceProgress({ current: 0, total: 15 });
+          setError(null);
+        }
+
+        if (eventType === "avatar.references.generation.progress") {
+          setIsGenerating(true);
+          const p = payload as { progress?: number; total?: number };
+          setReferenceProgress({ current: Number(p.progress || 0), total: Number(p.total || 15) });
+          // Fetch slots to show progress visually
+          void getReferenceSlots(avatarId).then(setSlots);
+        }
+
+        if (eventType === "avatar.references.generation.completed") {
+          setIsGenerating(false);
+          setReferenceProgress(null);
+          void getReferenceSlots(avatarId).then(setSlots);
+          setTrainingMessage("References generated. Ready to train LoRA.");
+        }
+
+        if (eventType === "avatar.references.generation.failed") {
+          setIsGenerating(false);
+          setReferenceProgress(null);
+          setError(String(payload.error || "Reference generation failed"));
+        }
       },
-      () => {
-        // Keep previous state; SSE disconnections are non-blocking.
+      (err) => {
+        console.error("FinalizeAppearance SSE connection error:", err);
       }
     );
 
+    source.onopen = () => {
+      console.log("FinalizeAppearance SSE connection established");
+    };
+
     return () => {
+      console.log("Closing FinalizeAppearance SSE connection");
       source.close();
     };
   }, [avatarId]);
@@ -107,17 +154,15 @@ export function FinalizeAppearanceStep({ avatarId }: FinalizeAppearanceStepProps
     setIsGenerating(true);
     setError(null);
     try {
-      const response = await generateReferences(avatarId);
-      setSlots(response.slots);
-      setTrainingMessage("References generated. Ready to train LoRA.");
+      await generateReferences(avatarId);
+      // Wait for SSE events for progress
     } catch (generationError) {
-      console.error("Failed to generate references:", generationError);
+      console.error("Failed to start reference generation:", generationError);
       setError(
         generationError instanceof Error
           ? generationError.message
           : "Failed to generate references"
       );
-    } finally {
       setIsGenerating(false);
     }
   };
@@ -204,17 +249,26 @@ export function FinalizeAppearanceStep({ avatarId }: FinalizeAppearanceStepProps
         </div>
 
         <div className="mb-6 rounded-2xl border border-[#d6dbd4] bg-white p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-[#8ca1c5]">Training status</p>
-          <p className="mt-2 text-sm font-semibold text-[#1a3a2a]">{progressLabel}</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-[#8ca1c5]">
+            {isGenerating ? "Generation Progress" : "Training status"}
+          </p>
+          <p className="mt-2 text-sm font-semibold text-[#1a3a2a]" aria-live="polite">
+            {isGenerating && referenceProgress 
+              ? `Generating references: ${referenceProgress.current} / ${referenceProgress.total}`
+              : progressLabel}
+          </p>
           <div className="mt-3 h-2 w-full rounded-full bg-[#f0f3f0]">
             <div
-              className="h-full rounded-full bg-[#3c9f95] transition-all duration-300"
-              style={{ width: `${Math.min(100, Math.max(0, trainingProgress))}%` }}
+              className={`h-full rounded-full transition-all duration-300 ${isGenerating ? 'bg-blue-500' : 'bg-[#3c9f95]'}`}
+              style={{ 
+                width: `${isGenerating && referenceProgress 
+                  ? (referenceProgress.current / referenceProgress.total) * 100 
+                  : Math.min(100, Math.max(0, trainingProgress))}%` 
+              }}
               role="progressbar"
-              aria-valuenow={trainingProgress}
+              aria-valuenow={isGenerating && referenceProgress ? referenceProgress.current : trainingProgress}
               aria-valuemin={0}
-              aria-valuemax={100}
-              aria-label="LoRA training progress"
+              aria-valuemax={isGenerating && referenceProgress ? referenceProgress.total : 100}
             />
           </div>
         </div>

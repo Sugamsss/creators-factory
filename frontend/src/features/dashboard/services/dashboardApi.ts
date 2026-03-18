@@ -15,7 +15,7 @@ export const MOCK_RECENT_ACTIVITY: ActivityItem[] = [
 ];
 
 export const MOCK_QUICK_ACTIONS: QuickAction[] = [
-  { label: "Create Avatar", icon: "add_circle", href: "/avatars/create/new-avatar" },
+  { label: "Create Avatar", icon: "add_circle", href: "/avatars/create/new" },
   { label: "Generate Script", icon: "edit_note", href: "/scripts" },
   { label: "View Videos", icon: "smart_display", href: "/videos" },
   { label: "Manage Automations", icon: "settings", href: "/automations" },

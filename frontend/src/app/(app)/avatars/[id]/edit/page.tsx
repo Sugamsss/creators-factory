@@ -8,10 +8,11 @@ import {
   deleteAvatar,
   getAvatar,
   getReferenceSlots,
+  listAvatarIndustries,
   toggleAvatarVisibility,
   updateAvatar,
 } from "@/features/avatars/services/avatarApi";
-import type { AvatarDetailModel } from "@/features/avatars/types";
+import type { AvatarDetailModel, AvatarIndustry } from "@/features/avatars/types";
 
 function isLocked(avatar: AvatarDetailModel, field: string): boolean {
   return avatar.field_locks.some((lock) => lock.field_path === field && lock.is_locked);
@@ -22,6 +23,11 @@ function splitLines(value: string): string[] {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function lockReason(avatar: AvatarDetailModel, field: string): string | null {
+  if (!isLocked(avatar, field)) return null;
+  return "Locked by the source avatar settings.";
 }
 
 export default function AvatarEditPage({ params }: { params: Promise<{ id: string }> }) {
@@ -42,6 +48,7 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
   const [communicationPrinciples, setCommunicationPrinciples] = useState("");
   const [industryId, setIndustryId] = useState("");
   const [roleParagraph, setRoleParagraph] = useState("");
+  const [industries, setIndustries] = useState<AvatarIndustry[]>([]);
 
   useEffect(() => {
     const avatarId = Number(id);
@@ -55,10 +62,11 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
     setError(null);
     setNotice(null);
 
-    void Promise.all([getAvatar(avatarId), getReferenceSlots(id)])
-      .then(([avatarResponse, referenceSlots]) => {
+    void Promise.all([getAvatar(avatarId), getReferenceSlots(id), listAvatarIndustries()])
+      .then(([avatarResponse, referenceSlots, industryOptions]) => {
         setAvatar(avatarResponse);
         setReferenceCount(referenceSlots.length);
+        setIndustries(industryOptions);
         setName(avatarResponse.name || "");
         setAge(avatarResponse.age?.toString() || "");
         setDescription(avatarResponse.description || "");
@@ -93,6 +101,7 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
         communication_principles: splitLines(communicationPrinciples),
         industry_id: industryId ? Number(industryId) : null,
         role_paragraph: roleParagraph,
+        command: "save_draft",
       });
       setAvatar(updated);
       setNotice("Avatar details saved.");
@@ -117,7 +126,7 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
         communication_principles: splitLines(communicationPrinciples),
         industry_id: industryId ? Number(industryId) : null,
         role_paragraph: roleParagraph,
-        complete_avatar: true,
+        command: "complete_avatar",
       });
       setAvatar(updated);
       setNotice("Avatar marked as complete.");
@@ -245,6 +254,7 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
                 disabled={isLocked(avatar, "name")}
                 className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
               />
+              {lockReason(avatar, "name") && <span className="text-xs text-amber-700">{lockReason(avatar, "name")}</span>}
             </label>
             <label className="flex flex-col gap-1 text-sm">
               Age
@@ -254,6 +264,7 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
                 disabled={isLocked(avatar, "age")}
                 className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
               />
+              {lockReason(avatar, "age") && <span className="text-xs text-amber-700">{lockReason(avatar, "age")}</span>}
             </label>
           </div>
 
@@ -266,6 +277,7 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
               rows={3}
               className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
             />
+            {lockReason(avatar, "description") && <span className="text-xs text-amber-700">{lockReason(avatar, "description")}</span>}
           </label>
 
           <label className="flex flex-col gap-1 text-sm">
@@ -277,6 +289,7 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
               rows={5}
               className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
             />
+            {lockReason(avatar, "backstory") && <span className="text-xs text-amber-700">{lockReason(avatar, "backstory")}</span>}
           </label>
 
           <label className="flex flex-col gap-1 text-sm">
@@ -288,17 +301,26 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
               rows={4}
               className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
             />
+            {lockReason(avatar, "communication_principles") && <span className="text-xs text-amber-700">{lockReason(avatar, "communication_principles")}</span>}
           </label>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <label className="flex flex-col gap-1 text-sm">
-              Industry ID
-              <input
+              Industry
+              <select
                 value={industryId}
                 onChange={(event) => setIndustryId(event.target.value)}
                 disabled={isLocked(avatar, "industry_id")}
                 className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
-              />
+              >
+                <option value="">Select Industry</option>
+                {industries.map((industry) => (
+                  <option key={industry.id} value={industry.id}>
+                    {industry.name}
+                  </option>
+                ))}
+              </select>
+              {lockReason(avatar, "industry_id") && <span className="text-xs text-amber-700">{lockReason(avatar, "industry_id")}</span>}
             </label>
             <label className="flex flex-col gap-1 text-sm">
               Role Paragraph
@@ -308,6 +330,7 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
                 disabled={isLocked(avatar, "role_paragraph")}
                 className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
               />
+              {lockReason(avatar, "role_paragraph") && <span className="text-xs text-amber-700">{lockReason(avatar, "role_paragraph")}</span>}
             </label>
           </div>
 

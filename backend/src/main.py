@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -26,6 +27,7 @@ from src.modules.avatars.models import (
     AvatarReactionAsset,
     AvatarFieldLock,
     AvatarAttachment,
+    AvatarEvent,
 )
 from src.modules.automations.models import AutomationBinding
 
@@ -41,16 +43,20 @@ _ = [
     AvatarReactionAsset,
     AvatarFieldLock,
     AvatarAttachment,
+    AvatarEvent,
     AutomationBinding,
     Industry,
 ]
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 Path(settings.LOCAL_MEDIA_ROOT).mkdir(parents=True, exist_ok=True)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not (settings.FAL_API_KEY or settings.FAL_KEY):
+        logger.warning("fal API key is not configured (set FAL_API_KEY or FAL_KEY).")
     await init_db()
     await seed_industries()
     yield

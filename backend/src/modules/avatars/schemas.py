@@ -17,6 +17,7 @@ DeploymentSummary = Literal[
     "not_in_use", "in_use", "partially_paused", "fully_paused"
 ]
 AspectRatio = Literal["1:1", "3:4", "4:3", "9:16", "16:9"]
+OwnershipScope = Literal["personal", "org"]
 
 
 class IndustryResponse(BaseModel):
@@ -113,7 +114,7 @@ class ExploreResponse(BaseModel):
 
 
 class AvatarDraftCreate(BaseModel):
-    ownership_scope: str = Field(default="personal")
+    ownership_scope: OwnershipScope = Field(default="personal")
     org_id: Optional[int] = None
 
 
@@ -193,8 +194,8 @@ class AvatarUpdate(BaseModel):
     communication_principles: Optional[List[str]] = None
     industry_id: Optional[int] = None
     role_paragraph: Optional[str] = None
-    active_card_image_url: Optional[str] = None
     personality_payload: Optional[AvatarPersonalityPayload] = None
+    command: Optional[Literal["save_draft", "complete_avatar", "save_and_exit"]] = None
     complete_avatar: bool = False
 
     @field_validator("communication_principles")
@@ -229,12 +230,26 @@ class EditBaseRequest(BaseModel):
 
 
 class GenerationResponse(BaseModel):
-    version_id: int
-    version_number: int
-    image_url: str
+    version_id: Optional[int] = None
+    version_number: Optional[int] = None
+    image_url: Optional[str] = None
     prompt: str
     model: str
     aspect_ratio: str
+
+
+class AsyncAcceptedResponse(BaseModel):
+    accepted: bool = True
+    operation_id: str
+    avatar_id: int
+    operation: Literal[
+        "generate_base",
+        "edit_base",
+        "generate_references",
+        "train_lora",
+        "retry_lora",
+    ]
+    started_at: datetime
 
 
 class VisualVersionResponse(BaseModel):
@@ -268,6 +283,23 @@ class ReferenceSlotResponse(BaseModel):
 class GenerateReferencesResponse(BaseModel):
     count: int
     slots: List[ReferenceSlotResponse]
+
+
+class StepReadinessResponse(BaseModel):
+    step_id: int
+    step_name: str
+    is_complete: bool
+    can_enter: bool
+    blocked_reasons: List[str] = Field(default_factory=list)
+
+
+class AvatarReadinessResponse(BaseModel):
+    avatar_id: int
+    build_state: BuildState
+    current_step: int
+    can_complete_avatar: bool
+    completion_blockers: List[str] = Field(default_factory=list)
+    steps: List[StepReadinessResponse] = Field(default_factory=list)
 
 
 class ToggleVisibilityRequest(BaseModel):

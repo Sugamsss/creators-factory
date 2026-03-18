@@ -7,21 +7,21 @@ This is the single source of truth for execution progress.
 - Page: `Avatars`
 - Package status: `ready_for_execution`
 - Current implementation status: `in_progress`
-- Last updated by: `opencode`
-- Current overall percent complete: `92%`
-- Current next recommended task: **All feature development is complete.** Focusing on **QA: QA-002, QA-003, QA-004, QA-005, QA-006, QA-007, QA-008, and QA-009** are the priorities
+- Last updated by: `codex`
+- Current overall percent complete: `68%`
+- Current next recommended task: **Complete frontend Phase 1 rewiring against backend readiness/state-machine contracts, then finish acceptance QA.**
 
 ## Milestone Board
 
 | Milestone ID | Milestone                                      | Status      | Dependencies                    | Owner       | Progress | Done When                                                       |
 | ------------ | ---------------------------------------------- | ----------- | ------------------------------- | ----------- | -------- | --------------------------------------------------------------- |
-| M1           | Schema and contracts established               | done        | none                            | Antigravity | 100%     | core models, state model, and endpoint skeletons exist          |
+| M1           | Schema and contracts established               | in_progress | none                            | unassigned  | 78%      | canonical transition/readiness contracts and API parity are complete |
 | M2           | Frontend route shells and section rendering    | done        | M1 partial contracts understood | unassigned  | 100%     | `/avatars`, `/avatars/all`, create/edit shells render correctly |
-| M3           | Visual creation flow implemented               | done        | M1                              | unassigned  | 100%     | Step 1 and Step 2 flows work with training status updates       |
-| M4           | Personality and completion flow implemented    | done        | M1, M3 partial                  | unassigned  | 100%     | Step 3 completes and avatars can move to ready state            |
-| M5           | Explore, sharing, and clone system implemented | done        | M1, M4                          | unassigned  | 100%     | public eligibility, Explore, clone flow, and locks work         |
-| M6           | Use, Pause, Delete, Restore implemented        | done        | M1, M4                          | unassigned  | 100%     | automation bindings and recycle behavior work                   |
-| M7           | QA, accessibility, and polish complete         | in_progress | M2, M3, M4, M5, M6              | unassigned  | 78%      | all acceptance checks pass                                      |
+| M3           | Visual creation flow implemented               | in_progress | M1                              | unassigned  | 72%      | Step 1 and Step 2 flows are contract-compliant and immutable after ready |
+| M4           | Personality and completion flow implemented    | in_progress | M1, M3 partial                  | unassigned  | 74%      | Step 3 completion uses readiness guards and validated payloads only |
+| M5           | Explore, sharing, and clone system implemented | in_progress | M1, M4                          | unassigned  | 66%      | Explore filters, clone locks, and public/org permissions match contract |
+| M6           | Use, Pause, Delete, Restore implemented        | in_progress | M1, M4                          | unassigned  | 70%      | deploy/pause/delete/restore flows are behaviorally aligned and reversible |
+| M7           | QA, accessibility, and polish complete         | not_started | M2, M3, M4, M5, M6              | unassigned  | 10%      | all acceptance checks pass                                      |
 
 ## Parallel Work Guidance
 
@@ -42,7 +42,8 @@ Tasks that should **not** start before prerequisites:
 
 Current blockers:
 
-- none
+- org membership/admin model is not implemented; org collaboration paths are intentionally restricted
+- Step 2 per-slot refinement UX is not complete yet
 
 ## Update Rules
 

@@ -15,8 +15,6 @@ import {
   Zap, 
   Settings,
   Search,
-  Plus,
-  ChevronRight,
   LogOut,
   CreditCard,
   Bell
@@ -37,16 +35,24 @@ const sectionLabels: Record<string, string> = {
 };
 
 function FloatingParticles() {
+  const [particles, setParticles] = React.useState<Array<{ x: string; y: string }>>([]);
+
+  React.useEffect(() => {
+    setParticles(
+      [...Array(6)].map(() => ({
+        x: `${Math.random() * 100}%`,
+        y: `${Math.random() * 100}%`,
+      }))
+    );
+  }, []);
+
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      {[...Array(6)].map((_, i) => (
+      {particles.map((pos, i) => (
         <motion.div
           key={i}
           className="absolute w-1.5 h-1.5 rounded-full bg-white/20"
-          initial={{
-            x: Math.random() * 100 + "%",
-            y: Math.random() * 100 + "%",
-          }}
+          initial={{ x: pos.x, y: pos.y }}
           animate={{
             y: [null, "-20px", "20px", "-20px"],
             x: [null, "10px", "-10px", "10px"],
@@ -72,12 +78,10 @@ function NavItem({
   item, 
   isActive, 
   isExpanded, 
-  pathname 
 }: { 
   item: typeof navItems[0]; 
   isActive: boolean; 
   isExpanded: boolean;
-  pathname: string;
 }) {
   const [isHovered, setIsHovered] = React.useState(false);
   const [mousePosition, setMousePosition] = React.useState({ x: 0, y: 0 });
@@ -280,11 +284,10 @@ export function Sidebar() {
                 const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
                 return (
                   <NavItem 
-                    key={item.href} 
-                    item={item} 
-                    isActive={isActive} 
+                    key={item.href}
+                    item={item}
+                    isActive={isActive}
                     isExpanded={isExpanded}
-                    pathname={pathname}
                   />
                 );
               })}
@@ -311,11 +314,10 @@ export function Sidebar() {
                   const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
                   return (
                     <NavItem 
-                      key={item.href} 
-                      item={item} 
-                      isActive={isActive} 
+                      key={item.href}
+                      item={item}
+                      isActive={isActive}
                       isExpanded={isExpanded}
-                      pathname={pathname}
                     />
                   );
                 })}
