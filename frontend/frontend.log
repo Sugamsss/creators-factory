@@ -177,3 +177,4 @@ Import trace for requested module:
  GET /avatars/create/14 200 in 30ms
  ✓ Compiled in 392ms (1940 modules)
  GET /avatars/create/14 200 in 30ms
+[?25h
