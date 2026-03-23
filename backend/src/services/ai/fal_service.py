@@ -25,10 +25,13 @@ FAL_ENDPOINTS = {
         "text_to_image": "fal-ai/bytedance/seedream/v5/lite/text-to-image",
         "edit": "fal-ai/bytedance/seedream/v5/lite/edit",
     },
+    "llm": {
+        "chat": "fal-ai/meta-llama/llama-3.1-70b-instruct",
+    },
 }
 
 QUALITY_SETTINGS = {
-    "openai_image_1_5": "medium",
+    "openai_image_1_5": "high",
     "google_nano_banana_2": "medium",
     "seedream_v5": "auto_3K",
 }
@@ -48,7 +51,13 @@ ASPECT_RATIO_MAP = {
         "16:9": "16:9",
         "9:16": "9:16",
     },
-    "seedream_v5": {"*": "auto_3K"},
+    "seedream_v5": {
+        "1:1": "square_hd",
+        "3:4": "portrait_4_3",
+        "4:3": "landscape_4_3",
+        "16:9": "landscape_16_9",
+        "9:16": "portrait_16_9",
+    },
 }
 
 TRANSIENT_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
@@ -82,15 +91,13 @@ class FalTelemetry:
 class FalService:
     def __init__(self):
         self.api_key = self._resolve_api_key()
-        self.base_url = "https://queue.fal.run"
+        self.base_url = "https://fal.run"
         self.headers = {
             "Authorization": f"Key {self.api_key}" if self.api_key else "",
             "Content-Type": "application/json",
         }
-        self.submit_timeout_seconds = 30.0
-        self.status_timeout_seconds = 12.0
-        self.max_wait_seconds = 240.0
-        self.poll_interval_seconds = 2.0
+        # Synchronous fal.run inference can take longer than queue submit requests.
+        self.submit_timeout_seconds = 180.0
         self.max_http_retries = 3
 
     def _resolve_api_key(self) -> str:
@@ -131,7 +138,10 @@ class FalService:
                         json=json_payload,
                         timeout=timeout,
                     )
-                if response.status_code in TRANSIENT_STATUS_CODES and attempt < self.max_http_retries:
+                if (
+                    response.status_code in TRANSIENT_STATUS_CODES
+                    and attempt < self.max_http_retries
+                ):
                     await asyncio.sleep(delay)
                     delay *= 2
                     continue
@@ -173,7 +183,9 @@ class FalService:
         payload: Dict[str, Any] = {"prompt": prompt, "num_images": num_images}
         if model == "openai_image_1_5":
             payload["quality"] = QUALITY_SETTINGS[model]
-            payload["image_size"] = ASPECT_RATIO_MAP[model].get(aspect_ratio, "1024x1024")
+            payload["image_size"] = ASPECT_RATIO_MAP[model].get(
+                aspect_ratio, "1024x1024"
+            )
             payload["output_format"] = "png"
         elif model == "google_nano_banana_2":
             payload["resolution"] = "1K"
@@ -181,7 +193,7 @@ class FalService:
             payload["limit_generations"] = True
             payload["output_format"] = "png"
         elif model == "seedream_v5":
-            payload["image_size"] = ASPECT_RATIO_MAP[model]["*"]
+            payload["image_size"] = ASPECT_RATIO_MAP[model].get(aspect_ratio, "auto_2K")
         else:
             raise FalResponseError(f"Unsupported model '{model}'.")
         return payload
@@ -202,7 +214,9 @@ class FalService:
         }
         if model == "openai_image_1_5":
             payload["quality"] = QUALITY_SETTINGS[model]
-            payload["image_size"] = ASPECT_RATIO_MAP[model].get(aspect_ratio, "1024x1024")
+            payload["image_size"] = ASPECT_RATIO_MAP[model].get(
+                aspect_ratio, "1024x1024"
+            )
             payload["input_fidelity"] = "high"
             payload["output_format"] = "png"
             if mask_image_url:
@@ -213,7 +227,9 @@ class FalService:
             payload["limit_generations"] = True
             payload["output_format"] = "png"
         elif model == "seedream_v5":
-            payload["image_size"] = ASPECT_RATIO_MAP[model]["*"]
+            payload["image_size"] = ASPECT_RATIO_MAP[model].get(aspect_ratio, "auto_2K")
+            if mask_image_url:
+                payload["mask_image"] = mask_image_url
         else:
             raise FalResponseError(f"Unsupported model '{model}'.")
         return payload
@@ -282,70 +298,6 @@ class FalService:
             telemetry=telemetry,
         )
 
-    async def get_request_status(
-        self, endpoint: str, request_id: str, *, status_url: Optional[str] = None
-    ) -> Dict[str, Any]:
-        telemetry = FalTelemetry(endpoint=endpoint, mode="status", model="n/a", request_id=request_id)
-        target_url = status_url or f"{self.base_url}/{endpoint}/requests/{request_id}/status"
-        return await self._request_json(
-            "GET",
-            target_url,
-            timeout=self.status_timeout_seconds,
-            telemetry=telemetry,
-        )
-
-    async def get_request_result(
-        self, endpoint: str, request_id: str, *, result_url: Optional[str] = None
-    ) -> Dict[str, Any]:
-        telemetry = FalTelemetry(endpoint=endpoint, mode="result", model="n/a", request_id=request_id)
-        target_url = result_url or f"{self.base_url}/{endpoint}/requests/{request_id}"
-        return await self._request_json(
-            "GET",
-            target_url,
-            timeout=self.status_timeout_seconds,
-            telemetry=telemetry,
-        )
-
-    async def wait_for_completion(
-        self,
-        endpoint: str,
-        request_id: str,
-        *,
-        status_url: Optional[str] = None,
-        response_url: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        elapsed = 0.0
-        while elapsed < self.max_wait_seconds:
-            status = await self.get_request_status(
-                endpoint, request_id, status_url=status_url
-            )
-            normalized = str(status.get("status", "")).strip().upper()
-            if normalized in {"COMPLETED", "SUCCEEDED", "SUCCESS"}:
-                result = await self.get_request_result(
-                    endpoint,
-                    request_id,
-                    result_url=status.get("response_url") or response_url,
-                )
-                images = self._normalize_images(result)
-                if not images:
-                    raise FalResponseError(
-                        f"fal completed but no image URLs found (request_id={request_id})."
-                    )
-                return {"request_id": request_id, "images": images}
-
-            if normalized in {"FAILED", "ERROR", "CANCELED", "CANCELLED"}:
-                error_payload = status.get("error") or status.get("logs") or status
-                raise FalResponseError(
-                    f"fal request failed (request_id={request_id}, status={normalized}, error={error_payload})"
-                )
-
-            await asyncio.sleep(self.poll_interval_seconds)
-            elapsed += self.poll_interval_seconds
-
-        raise FalTimeoutError(
-            f"fal timed out after {self.max_wait_seconds}s (request_id={request_id}, endpoint={endpoint})."
-        )
-
     async def submit_and_wait(
         self,
         model: str,
@@ -357,11 +309,15 @@ class FalService:
         num_images: int = 1,
     ) -> Dict[str, Any]:
         endpoint = (
-            FAL_ENDPOINTS[model]["edit"] if is_edit else FAL_ENDPOINTS[model]["text_to_image"]
+            FAL_ENDPOINTS[model]["edit"]
+            if is_edit
+            else FAL_ENDPOINTS[model]["text_to_image"]
         )
         if is_edit:
             if not image_urls:
-                raise FalResponseError("Edit generation requires at least one reference image URL.")
+                raise FalResponseError(
+                    "Edit generation requires at least one reference image URL."
+                )
             submit_result = await self.submit_edit_image(
                 model=model,
                 prompt=prompt,
@@ -378,22 +334,44 @@ class FalService:
                 num_images=num_images,
             )
 
-        immediate_images = self._normalize_images(submit_result)
-        if immediate_images:
-            return {
-                "request_id": submit_result.get("request_id"),
-                "images": immediate_images,
-            }
-
-        request_id = submit_result.get("request_id")
-        if not request_id:
+        images = self._normalize_images(submit_result)
+        if not images:
             raise FalResponseError(
-                f"fal submit response missing request_id for endpoint={endpoint}"
+                f"fal inference response did not include a usable image URL (endpoint={endpoint})."
             )
+        return {
+            "request_id": submit_result.get("request_id"),
+            "images": images,
+        }
 
-        return await self.wait_for_completion(
-            endpoint=endpoint,
-            request_id=request_id,
-            status_url=submit_result.get("status_url"),
-            response_url=submit_result.get("response_url"),
+    async def submit_llm(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        max_tokens: int = 1000,
+        temperature: float = 0.7,
+    ) -> str:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        endpoint = FAL_ENDPOINTS["llm"]["chat"]
+        result = await self._request_json(
+            "POST",
+            f"{self.base_url}/{endpoint}",
+            json_payload=payload,
+            timeout=60.0,
+            telemetry=FalTelemetry(endpoint=endpoint, mode="llm-chat"),
+        )
+        return (
+            result.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
         )

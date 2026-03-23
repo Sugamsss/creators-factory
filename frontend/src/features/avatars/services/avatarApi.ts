@@ -90,7 +90,7 @@ export interface GenerationPayload {
   prompt: string;
   model: "openai_image_1_5" | "google_nano_banana_2" | "seedream_v5";
   aspect_ratio: "1:1" | "3:4" | "4:3" | "9:16" | "16:9";
-  age: number;
+  age?: number;
 }
 
 export interface EditGenerationPayload extends GenerationPayload {
@@ -376,11 +376,25 @@ export async function getAttachments(avatarId: string): Promise<Attachment[]> {
   return apiRequest<Attachment[]>(`/avatars/${avatarId}/attachments`);
 }
 
-export async function deleteAttachment(
-  avatarId: string,
-  attachmentId: number
-): Promise<void> {
   await apiRequest<void>(`/avatars/${avatarId}/attachments/${attachmentId}`, {
     method: "DELETE",
+  });
+}
+
+export async function generatePersonalityDraft(avatarId: number): Promise<{
+  name: string;
+  age: number;
+  description: string;
+  backstory: string;
+  role_paragraph: string;
+}> {
+  return apiRequest<{
+    name: string;
+    age: number;
+    description: string;
+    backstory: string;
+    role_paragraph: string;
+  }>(`/avatars/${avatarId}/generate-personality-draft`, {
+    method: "POST",
   });
 }

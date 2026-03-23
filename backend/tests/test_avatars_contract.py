@@ -222,12 +222,24 @@ async def test_deploy_pause_delete_restore_flow(client_and_sessionmaker):
 
 
 @pytest.mark.asyncio
-async def test_step1_generate_base_requires_age(client_and_sessionmaker):
-    client, _ = client_and_sessionmaker
+async def test_step1_generate_base_accepts_optional_age(client_and_sessionmaker, monkeypatch):
+    client, session_maker = client_and_sessionmaker
     await signup(client, email="step1-age@example.com")
 
     draft_response = await client.post("/api/v1/avatars/drafts", json={"ownership_scope": "personal"})
     avatar_id = draft_response.json()["id"]
+
+    async def fake_submit_and_wait(**kwargs):
+        return {"request_id": "test-req", "images": [{"url": "https://fal.example/base.png"}]}
+
+    async def fake_download_and_store(*args, **kwargs):
+        return "https://cdn.example/base.png"
+
+    from src.modules.avatars import router as avatars_router
+
+    monkeypatch.setattr(avatars_router, "AsyncSessionLocal", session_maker)
+    monkeypatch.setattr(avatars_router.fal_service, "submit_and_wait", fake_submit_and_wait)
+    monkeypatch.setattr(avatars_router.media_service, "download_and_store", fake_download_and_store)
 
     response = await client.post(
         f"/api/v1/avatars/{avatar_id}/generate-base",
@@ -237,7 +249,14 @@ async def test_step1_generate_base_requires_age(client_and_sessionmaker):
             "aspect_ratio": "16:9",
         },
     )
-    assert response.status_code == 422
+    assert response.status_code == 202
+
+    # Ensure background generation task completes and does not leak into subsequent tests.
+    import asyncio
+
+    task = avatars_router.visual_generation_tasks.get(avatar_id)
+    if task is not None:
+        await asyncio.wait_for(task, timeout=2)
 
 
 @pytest.mark.asyncio

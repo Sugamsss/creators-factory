@@ -13,6 +13,18 @@ import {
   updateAvatar,
 } from "@/features/avatars/services/avatarApi";
 import type { AvatarDetailModel, AvatarIndustry } from "@/features/avatars/types";
+import {
+  pipelineAccentButtonClass,
+  pipelineDangerButtonClass,
+  pipelineInputClass,
+  pipelineLabelClass,
+  pipelinePanelClass,
+  pipelinePrimaryButtonClass,
+  pipelineSecondaryButtonClass,
+  pipelineSelectClass,
+  pipelineTextareaClass,
+} from "@/features/avatars/components/creation/pipelineControls";
+import { cn } from "@/shared/lib/utils";
 
 function isLocked(avatar: AvatarDetailModel, field: string): boolean {
   return avatar.field_locks.some((lock) => lock.field_path === field && lock.is_locked);
@@ -28,6 +40,15 @@ function splitLines(value: string): string[] {
 function lockReason(avatar: AvatarDetailModel, field: string): string | null {
   if (!isLocked(avatar, field)) return null;
   return "Locked by the source avatar settings.";
+}
+
+function InfoChip({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-3 py-2">
+      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#8ca1c5]">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-[#1a3a2a]">{value}</p>
+    </div>
+  );
 }
 
 export default function AvatarEditPage({ params }: { params: Promise<{ id: string }> }) {
@@ -89,9 +110,11 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
 
   const saveChanges = async () => {
     if (!avatar) return;
+
     setIsSaving(true);
     setError(null);
     setNotice(null);
+
     try {
       const updated = await updateAvatar(avatar.id, {
         name,
@@ -114,9 +137,11 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
 
   const completeAvatar = async () => {
     if (!avatar) return;
+
     setIsSaving(true);
     setError(null);
     setNotice(null);
+
     try {
       const updated = await updateAvatar(avatar.id, {
         name,
@@ -139,8 +164,10 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
 
   const toggleVisibility = async () => {
     if (!avatar) return;
+
     setIsSaving(true);
     setError(null);
+
     try {
       const updated = await toggleAvatarVisibility(avatar.id, {
         is_public: !avatar.is_public,
@@ -148,7 +175,11 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
       setAvatar(updated.avatar);
       setNotice(updated.avatar.is_public ? "Avatar is now public." : "Avatar is now private.");
     } catch (visibilityError) {
-      setError(visibilityError instanceof Error ? visibilityError.message : "Failed to toggle visibility");
+      setError(
+        visibilityError instanceof Error
+          ? visibilityError.message
+          : "Failed to toggle visibility"
+      );
     } finally {
       setIsSaving(false);
     }
@@ -156,8 +187,10 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
 
   const removeAvatar = async () => {
     if (!avatar) return;
+
     setIsSaving(true);
     setError(null);
+
     try {
       await deleteAvatar(avatar.id);
       router.push("/avatars");
@@ -170,7 +203,9 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
   if (isLoading) {
     return (
       <PageContainer>
-        <p className="text-sm text-muted">Loading avatar...</p>
+        <div className="flex h-full items-center justify-center py-20">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#3c9f95] border-t-transparent" />
+        </div>
       </PageContainer>
     );
   }
@@ -197,29 +232,27 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
       )}
 
       {error && <p className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-600">{error}</p>}
-      {notice && <p className="mb-4 rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p>}
+      {notice && <p className="mb-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p>}
 
       <section className="mb-8">
         <SectionHeading title="Step 1 — Visual Identity" description="Read-only for completed avatars" />
-        <div className="rounded-2xl border border-border bg-white p-5">
-          <div className="flex flex-col gap-4 md:flex-row">
-            <div className="relative h-64 w-full overflow-hidden rounded-xl border border-border md:w-52">
+        <div className={cn(pipelinePanelClass, "p-5 md:p-6") }>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-[220px_1fr]">
+            <div className="relative h-64 overflow-hidden rounded-2xl border border-[#d6dbd4] bg-[#f4f7f5]">
               {avatar.active_card_image_url ? (
                 <Image src={avatar.active_card_image_url} alt={avatar.name || "Avatar"} fill className="object-cover" />
               ) : (
-                <div className="flex h-full items-center justify-center text-sm text-muted">No base image selected</div>
+                <div className="flex h-full items-center justify-center text-sm text-[#5c6d66]">
+                  No base image selected
+                </div>
               )}
             </div>
-            <div className="flex-1 space-y-2 text-sm text-muted">
-              <p>
-                Build state: <span className="font-semibold text-ink">{avatar.build_state}</span>
-              </p>
-              <p>
-                Source type: <span className="font-semibold text-ink">{avatar.source_type}</span>
-              </p>
-              <p>
-                Visual profile snapshot: <span className="font-semibold text-ink">{avatar.source_avatar_id || "N/A"}</span>
-              </p>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <InfoChip label="Build State" value={avatar.build_state} />
+              <InfoChip label="Source Type" value={avatar.source_type} />
+              <InfoChip label="Ownership" value={avatar.ownership_scope} />
+              <InfoChip label="Visual Snapshot" value={avatar.source_avatar_id || "N/A"} />
             </div>
           </div>
         </div>
@@ -227,91 +260,105 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
 
       <section className="mb-8">
         <SectionHeading title="Step 2 — Finalize Appearance" description="Read-only status" />
-        <div className="rounded-2xl border border-border bg-white p-5 text-sm text-muted">
-          <p>
-            Reference slots: <span className="font-semibold text-ink">{referenceCount} / 15</span>
-          </p>
-          <p>
-            Training status:{" "}
-            <span className="font-semibold text-ink">{avatar.training_summary?.status || "not_started"}</span>
-          </p>
-          <p>
-            Training attempts:{" "}
-            <span className="font-semibold text-ink">{avatar.training_summary?.training_attempt_count || 0}</span>
-          </p>
+        <div className={cn(pipelinePanelClass, "grid grid-cols-1 gap-3 p-5 md:grid-cols-3 md:p-6") }>
+          <InfoChip label="Reference Slots" value={`${referenceCount} / 15`} />
+          <InfoChip
+            label="Training Status"
+            value={avatar.training_summary?.status || "not_started"}
+          />
+          <InfoChip
+            label="Training Attempts"
+            value={avatar.training_summary?.training_attempt_count || 0}
+          />
         </div>
       </section>
 
       <section>
         <SectionHeading title="Step 3 — Personality" description="Editable fields" />
-        <div className="space-y-4 rounded-2xl border border-border bg-white p-5">
+        <div className={cn(pipelinePanelClass, "space-y-4 p-5 md:p-6") }>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm">
-              Name
+            <label className="space-y-2">
+              <span className={pipelineLabelClass}>Name</span>
               <input
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 disabled={isLocked(avatar, "name")}
-                className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
+                className={cn(pipelineInputClass, isLocked(avatar, "name") && "bg-slate-100")}
               />
-              {lockReason(avatar, "name") && <span className="text-xs text-amber-700">{lockReason(avatar, "name")}</span>}
+              {lockReason(avatar, "name") && (
+                <span className="text-xs text-amber-700">{lockReason(avatar, "name")}</span>
+              )}
             </label>
-            <label className="flex flex-col gap-1 text-sm">
-              Age
+
+            <label className="space-y-2">
+              <span className={pipelineLabelClass}>Age</span>
               <input
                 value={age}
                 onChange={(event) => setAge(event.target.value)}
                 disabled={isLocked(avatar, "age")}
-                className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
+                className={cn(pipelineInputClass, isLocked(avatar, "age") && "bg-slate-100")}
               />
-              {lockReason(avatar, "age") && <span className="text-xs text-amber-700">{lockReason(avatar, "age")}</span>}
+              {lockReason(avatar, "age") && (
+                <span className="text-xs text-amber-700">{lockReason(avatar, "age")}</span>
+              )}
             </label>
           </div>
 
-          <label className="flex flex-col gap-1 text-sm">
-            Description
+          <label className="space-y-2">
+            <span className={pipelineLabelClass}>Description</span>
             <textarea
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               disabled={isLocked(avatar, "description")}
               rows={3}
-              className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
+              className={cn(pipelineTextareaClass, isLocked(avatar, "description") && "bg-slate-100")}
             />
-            {lockReason(avatar, "description") && <span className="text-xs text-amber-700">{lockReason(avatar, "description")}</span>}
+            {lockReason(avatar, "description") && (
+              <span className="text-xs text-amber-700">{lockReason(avatar, "description")}</span>
+            )}
           </label>
 
-          <label className="flex flex-col gap-1 text-sm">
-            Backstory
+          <label className="space-y-2">
+            <span className={pipelineLabelClass}>Backstory</span>
             <textarea
               value={backstory}
               onChange={(event) => setBackstory(event.target.value)}
               disabled={isLocked(avatar, "backstory")}
               rows={5}
-              className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
+              className={cn(pipelineTextareaClass, isLocked(avatar, "backstory") && "bg-slate-100")}
             />
-            {lockReason(avatar, "backstory") && <span className="text-xs text-amber-700">{lockReason(avatar, "backstory")}</span>}
+            {lockReason(avatar, "backstory") && (
+              <span className="text-xs text-amber-700">{lockReason(avatar, "backstory")}</span>
+            )}
           </label>
 
-          <label className="flex flex-col gap-1 text-sm">
-            Communication Principles (one per line)
+          <label className="space-y-2">
+            <span className={pipelineLabelClass}>Communication Principles (one per line)</span>
             <textarea
               value={communicationPrinciples}
               onChange={(event) => setCommunicationPrinciples(event.target.value)}
               disabled={isLocked(avatar, "communication_principles")}
               rows={4}
-              className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
+              className={cn(
+                pipelineTextareaClass,
+                isLocked(avatar, "communication_principles") && "bg-slate-100"
+              )}
             />
-            {lockReason(avatar, "communication_principles") && <span className="text-xs text-amber-700">{lockReason(avatar, "communication_principles")}</span>}
+            {lockReason(avatar, "communication_principles") && (
+              <span className="text-xs text-amber-700">
+                {lockReason(avatar, "communication_principles")}
+              </span>
+            )}
           </label>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm">
-              Industry
+            <label className="space-y-2">
+              <span className={pipelineLabelClass}>Industry</span>
               <select
                 value={industryId}
                 onChange={(event) => setIndustryId(event.target.value)}
                 disabled={isLocked(avatar, "industry_id")}
-                className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
+                className={cn(pipelineSelectClass, isLocked(avatar, "industry_id") && "bg-slate-100")}
               >
                 <option value="">Select Industry</option>
                 {industries.map((industry) => (
@@ -320,49 +367,66 @@ export default function AvatarEditPage({ params }: { params: Promise<{ id: strin
                   </option>
                 ))}
               </select>
-              {lockReason(avatar, "industry_id") && <span className="text-xs text-amber-700">{lockReason(avatar, "industry_id")}</span>}
+              {lockReason(avatar, "industry_id") && (
+                <span className="text-xs text-amber-700">{lockReason(avatar, "industry_id")}</span>
+              )}
             </label>
-            <label className="flex flex-col gap-1 text-sm">
-              Role Paragraph
+
+            <label className="space-y-2">
+              <span className={pipelineLabelClass}>Role Paragraph</span>
               <input
                 value={roleParagraph}
                 onChange={(event) => setRoleParagraph(event.target.value)}
                 disabled={isLocked(avatar, "role_paragraph")}
-                className="rounded-lg border border-border px-3 py-2 disabled:bg-slate-100"
+                className={cn(pipelineInputClass, isLocked(avatar, "role_paragraph") && "bg-slate-100")}
               />
-              {lockReason(avatar, "role_paragraph") && <span className="text-xs text-amber-700">{lockReason(avatar, "role_paragraph")}</span>}
+              {lockReason(avatar, "role_paragraph") && (
+                <span className="text-xs text-amber-700">{lockReason(avatar, "role_paragraph")}</span>
+              )}
             </label>
           </div>
 
-          <div className="flex flex-wrap gap-3 pt-2">
+          <div className="grid grid-cols-2 gap-2 pt-2 md:grid-cols-4">
             <button
-              onClick={() => void saveChanges()}
+              type="button"
+              onClick={() => {
+                void saveChanges();
+              }}
               disabled={isSaving}
-              className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              className={pipelinePrimaryButtonClass}
             >
               {isSaving ? "Saving..." : "Save Draft"}
             </button>
 
             <button
-              onClick={() => void completeAvatar()}
+              type="button"
+              onClick={() => {
+                void completeAvatar();
+              }}
               disabled={isSaving}
-              className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              className={pipelineAccentButtonClass}
             >
               Complete Avatar
             </button>
 
             <button
-              onClick={() => void toggleVisibility()}
+              type="button"
+              onClick={() => {
+                void toggleVisibility();
+              }}
               disabled={isSaving || avatar.build_state !== "ready"}
-              className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-ink disabled:opacity-50"
+              className={pipelineSecondaryButtonClass}
             >
               {avatar.is_public ? "Make Private" : "Make Public"}
             </button>
 
             <button
-              onClick={() => void removeAvatar()}
+              type="button"
+              onClick={() => {
+                void removeAvatar();
+              }}
               disabled={isSaving}
-              className="rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 disabled:opacity-50"
+              className={pipelineDangerButtonClass}
             >
               Delete Avatar
             </button>

@@ -1,14 +1,12 @@
-STEP1_NEW_GENERATION_PROMPT_TEMPLATE = """High-end professional studio portrait of {user_prompt}. 
+STEP1_NEW_GENERATION_PROMPT_TEMPLATE = """Create a high-quality portrait of: {user_prompt}.
 
-Technically flawless photography: clean natural lighting with soft shadows, realistic skin textures, sharp focus on the subject with creamy bokeh background, realistic hair and clothing detail. Shot on 85mm lens, ultra-photorealistic, professional color grading, lifelike and natural.
+Ensure the subject is clear and well-lit. Maintain all descriptive details from the prompt exactly as requested.
 
-Preserve all descriptive details from the prompt exactly. No text, no watermarks, no AI artifacts."""
+No text, no watermarks, no AI artifacts."""
 
 STEP1_EDIT_PROMPT_TEMPLATE = """Edit the provided reference image to: {user_prompt}
 
-Apply only the requested changes. Preserve all non-requested details exactly from the reference image, including identity, lighting direction, background style, and photographic quality.
-
-Quality target: high-end professional photoshoot, ultra-photorealistic, natural and lifelike. Output exactly one edited image."""
+Apply only the requested changes. Preserve all non-requested details exactly from the reference image, including identity, background style, framing, and overall aesthetic. Output exactly one edited image."""
 
 STEP1_EDIT_PRESERVE_PROMPT = """Preserve the input image exactly. Keep identity, framing, lighting, clothing, and background unchanged."""
 

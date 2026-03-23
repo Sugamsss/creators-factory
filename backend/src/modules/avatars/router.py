@@ -136,6 +136,65 @@ class AvatarEventBroker:
 
 fal_service = FalService()
 media_service = MediaStorageService()
+
+
+async def _ensure_fal_compatible_url(url: Optional[str]) -> Optional[str]:
+    """
+    If the URL is a local media URL (localhost), download the bytes and return
+    a base64 data URI so that fal.ai can consume it.
+    """
+    if not url:
+        return None
+    if url.startswith("data:"):
+        return url
+    if "localhost" in url or "127.0.0.1" in url:
+        try:
+            from src.services.ai.media_service import MediaStorageService
+
+            m_s = MediaStorageService()
+            data = await m_s.download_from_url(url)
+            import base64
+
+            # Detect content type from extension (naive but usually enough for our png/jpg)
+            ext = url.split(".")[-1].lower()
+            if ext == "jpg" or ext == "jpeg":
+                mime = "image/jpeg"
+            else:
+                mime = "image/png"
+            b64 = base64.b64encode(data).decode("utf-8")
+            return f"data:{mime};base64,{b64}"
+        except Exception as e:
+            logger.warning(f"Failed to convert local URL to base64: {e}")
+    return url
+
+
+async def _expand_visual_prompt(user_prompt: str, age: Optional[int] = None) -> str:
+    """
+    Use an LLM to expand a potentially simple user prompt into a rich, detailed
+    visual description for better image quality.
+    """
+    system_prompt = (
+        "You are an expert prompt engineer for photorealistic AI avatars. "
+        "Expand the given user prompt into a high-fidelity visual description. "
+        "Focus on: lighting, clothing, specific facial features, background atmosphere, and camera framing. "
+        "Keep the core identity consistent. Provide ONLY the expanded prompt string, no preamble."
+    )
+    input_text = user_prompt
+    if age:
+        input_text += f", age {age}"
+
+    try:
+        expanded = await fal_service.submit_llm(
+            prompt=input_text, system_prompt=system_prompt, temperature=0.65
+        )
+        if expanded and len(expanded) > len(user_prompt):
+            return expanded
+    except Exception as e:
+        logger.warning(f"Failed to expand prompt via LLM: {e}")
+
+    return PromptTemplateService.get_step1_new_generation_prompt(user_prompt, age)
+
+
 event_broker = AvatarEventBroker()
 training_tasks: Dict[int, asyncio.Task[Any]] = {}
 reaction_tasks: Dict[int, asyncio.Task[Any]] = {}
@@ -191,65 +250,97 @@ async def _start_reference_generation(avatar_id: int) -> str:
                     slot.slot_key: slot for slot in existing_result.scalars().all()
                 }
 
+                # We use a semaphore to limit concurrent fal.ai requests (preventing 429 and resource exhaustion)
+                # Most fal.ai accounts support 2-3 concurrent inferences on standard tiers.
+                sem = asyncio.Semaphore(3)
                 total = len(slot_definitions)
-                for i, slot_def in enumerate(slot_definitions):
+                completed_count = 0
+
+                async def _generate_slot(slot_def: Dict, index: int):
+                    nonlocal completed_count
                     slot_key = slot_def["slot_key"]
                     slot_label = slot_def["label"]
                     include_base = slot_def.get("include_base", False)
 
-                    if include_base:
-                        image_url = base_version.image_url
-                        prompt = "Base face"
-                    else:
-                        slot_prompt = f"Turn the person in the image to: {slot_def.get('prompt', '')}"
-                        result = await fal_service.submit_and_wait(
-                            model="seedream_v5",
-                            prompt=slot_prompt,
-                            aspect_ratio=base_version.aspect_ratio,
-                            is_edit=True,
-                            image_urls=[source_image_url],
-                        )
+                    async with sem:
+                        if include_base:
+                            image_url = base_version.image_url
+                            prompt = "Base face"
+                        else:
+                            slot_prompt = f"Turn the person in the image to: {slot_def.get('prompt', '')}"
+                            compatible_source = await _ensure_fal_compatible_url(
+                                source_image_url
+                            )
+                            result = await fal_service.submit_and_wait(
+                                model="seedream_v5",
+                                prompt=slot_prompt,
+                                aspect_ratio=base_version.aspect_ratio,
+                                is_edit=True,
+                                image_urls=[compatible_source]
+                                if compatible_source
+                                else [],
+                            )
 
-                        images = result.get("images") or []
-                        if not images or not isinstance(images[0], dict) or not images[0].get("url"):
-                            raise RuntimeError("fal response did not include a usable image URL")
-                        fal_url = images[0]["url"]
-                        short_id = uuid.uuid4().hex[:8]
-                        filename = f"ref_{slot_key}_{short_id}.png"
-                        image_url = await media_service.download_and_store(
-                            fal_url, avatar.id, "reference", filename
-                        )
-                        prompt = slot_prompt
+                            images = result.get("images") or []
+                            if (
+                                not images
+                                or not isinstance(images[0], dict)
+                                or not images[0].get("url")
+                            ):
+                                raise RuntimeError(
+                                    "fal response did not include a usable image URL"
+                                )
+                            fal_url = images[0]["url"]
+                            short_id = uuid.uuid4().hex[:8]
+                            filename = f"ref_{slot_key}_{short_id}.png"
+                            image_url = await media_service.download_and_store(
+                                fal_url, avatar.id, "reference", filename
+                            )
+                            prompt = slot_prompt
 
-                    if slot_key in existing_map:
-                        slot = existing_map[slot_key]
-                        slot.image_url = image_url
-                        slot.prompt = prompt
-                        slot.slot_label = slot_label
-                        slot.aspect_ratio = base_version.aspect_ratio
-                        slot.is_refined = False
-                    else:
-                        slot = ReferenceSlot(
-                            avatar_id=avatar.id,
-                            slot_key=slot_key,
-                            slot_label=slot_label,
-                            image_url=image_url,
-                            prompt=prompt,
-                            aspect_ratio=base_version.aspect_ratio,
-                        )
-                        db.add(slot)
+                        # Update or create slot in a separate context to avoid session overlapping
+                        async with AsyncSessionLocal() as sub_session:
+                            local_res = await sub_session.execute(
+                                select(ReferenceSlot).where(
+                                    ReferenceSlot.avatar_id == avatar.id,
+                                    ReferenceSlot.slot_key == slot_key,
+                                )
+                            )
+                            slot = local_res.scalar_one_or_none()
+                            if slot:
+                                slot.image_url = image_url
+                                slot.prompt = prompt
+                                slot.slot_label = slot_label
+                                slot.aspect_ratio = base_version.aspect_ratio
+                                slot.is_refined = False
+                            else:
+                                slot = ReferenceSlot(
+                                    avatar_id=avatar.id,
+                                    slot_key=slot_key,
+                                    slot_label=slot_label,
+                                    image_url=image_url,
+                                    prompt=prompt,
+                                    aspect_ratio=base_version.aspect_ratio,
+                                )
+                                sub_session.add(slot)
+                            await sub_session.commit()
 
+                    completed_count += 1
                     await event_broker.publish(
                         avatar_id,
                         "avatar.references.generation.progress",
                         {
                             "avatarId": avatar_id,
                             "operationId": operation_id,
-                            "progress": i + 1,
+                            "progress": completed_count,
                             "total": total,
                             "currentSlot": slot_key,
                         },
                     )
+
+                await asyncio.gather(
+                    *[_generate_slot(slot_def, i) for i, slot_def in enumerate(slot_definitions)]
+                )
 
                 expected_keys = {slot["slot_key"] for slot in slot_definitions}
                 for key, stale in existing_map.items():
@@ -334,12 +425,12 @@ async def _start_visual_generation(
                     enhanced_prompt = PromptTemplateService.get_step1_edit_prompt(
                         payload["prompt"], payload.get("age")
                     )
-                    aspect_ratio = payload.get("aspect_ratio")
+                    requested_aspect_ratio = payload.get("aspect_ratio")
                     mask_image_url = payload.get("mask_image_url")
+                    base_v = None
 
-                    # Ensure reference images are set if none provided
-                    if not reference_images:
-                        # Find current active version
+                    # Resolve active base if we need fallback references or fallback aspect ratio.
+                    if not reference_images or not requested_aspect_ratio:
                         base_v_res = await db.execute(
                             select(VisualVersion)
                             .where(
@@ -350,27 +441,42 @@ async def _start_visual_generation(
                             .limit(1)
                         )
                         base_v = base_v_res.scalar_one_or_none()
+
+                    # Ensure reference images are set if none provided
+                    if not reference_images:
                         if base_v:
                             actual_refs = [base_v.edit_source_url or base_v.image_url]
                         else:
                             actual_refs = []
                     else:
                         actual_refs = reference_images
+
+                    aspect_ratio = requested_aspect_ratio or (
+                        base_v.aspect_ratio if base_v and base_v.aspect_ratio else "16:9"
+                    )
                 else:
-                    enhanced_prompt = PromptTemplateService.get_step1_new_generation_prompt(
+                    # New generation Expansion
+                    enhanced_prompt = await _expand_visual_prompt(
                         payload["prompt"], payload.get("age")
                     )
-                    aspect_ratio = payload.get("aspect_ratio")
+                    aspect_ratio = payload.get("aspect_ratio") or "16:9"
                     mask_image_url = None
                     actual_refs = None
+
+                processed_refs = []
+                if actual_refs:
+                    for ref in actual_refs:
+                        processed_refs.append(await _ensure_fal_compatible_url(ref))
+
+                processed_mask = await _ensure_fal_compatible_url(mask_image_url)
 
                 result = await fal_service.submit_and_wait(
                     model=payload["model"],
                     prompt=enhanced_prompt,
                     aspect_ratio=aspect_ratio,
                     is_edit=is_edit,
-                    image_urls=actual_refs,
-                    mask_image_url=mask_image_url,
+                    image_urls=processed_refs if processed_refs else None,
+                    mask_image_url=processed_mask,
                 )
 
                 images = result.get("images") or []
@@ -403,7 +509,7 @@ async def _start_visual_generation(
                     aspect_ratio=aspect_ratio,
                     quality="medium"
                     if payload["model"] in {"openai_image_1_5", "google_nano_banana_2"}
-                    else "auto_3K",
+                    else "auto_2K",
                     is_edit=is_edit,
                     mask_image_url=mask_image_url,
                     edit_source_url=fal_url,
@@ -2091,3 +2197,58 @@ async def delete_attachment(
     await db.commit()
 
     return {"message": "Attachment deleted"}
+
+
+@router.post("/{avatar_id}/generate-personality-draft")
+async def generate_personality_draft(
+    avatar_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    avatar = await _fetch_avatar_with_relations(db, avatar_id)
+    if not avatar or not _can_edit_avatar(avatar, current_user["id"]):
+        raise HTTPException(status_code=404, detail="Avatar not found")
+
+    res = await db.execute(
+        select(VisualVersion)
+        .where(VisualVersion.avatar_id == avatar_id, VisualVersion.is_active_base)
+        .order_by(VisualVersion.version_number.desc())
+        .limit(1)
+    )
+    version = res.scalar_one_or_none()
+    if not version:
+        raise HTTPException(status_code=400, detail="Generate visual identity first.")
+
+    prompt = (
+        f"Create a personality profile for this character based on their appearance: {version.enhanced_prompt or version.prompt}. "
+        "Return ONLY valid JSON with keys: name, age (int), description (short), backstory (long, min 100 words), role (one-line)."
+    )
+
+    system_prompt = (
+        "You are an expert creative writer for AI avatars. "
+        "Generate a coherent, deep personality profile. "
+        "The 'backstory' MUST be at least 100 words long. "
+        "The 'age' MUST be an integer. "
+        "Return ONLY the raw JSON object, no md code blocks."
+    )
+
+    try:
+        raw_json = await fal_service.submit_llm(
+            prompt=prompt, system_prompt=system_prompt, temperature=0.75
+        )
+        if "```json" in raw_json:
+            raw_json = raw_json.split("```json")[1].split("```")[0].strip()
+        elif "```" in raw_json:
+            raw_json = raw_json.split("```")[1].strip()
+
+        data = json.loads(raw_json)
+        return {
+            "name": data.get("name", ""),
+            "age": int(data.get("age") or 25),
+            "description": data.get("description", ""),
+            "backstory": data.get("backstory", ""),
+            "role_paragraph": data.get("role", ""),
+        }
+    except Exception as e:
+        logger.error(f"Failed to generate personality draft: {e}")
+        raise HTTPException(status_code=500, detail=f"LLM generation failed: {str(e)}")

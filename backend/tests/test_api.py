@@ -14,6 +14,11 @@ from src.core.security import create_access_token, create_refresh_token, decode_
 import src.services.ai.fal_service as fal_module
 from src.services.ai.fal_service import ASPECT_RATIO_MAP, QUALITY_SETTINGS, FalService
 from src.services.ai.media_service import MediaStorageService
+from src.modules.avatars.domain.state_machine import (
+    AvatarCompletionContext,
+    derive_avatar_readiness,
+)
+from src.modules.avatars.models import AvatarBuildState, AvatarTrainingStatus
 
 
 def test_fal_service_mock():
@@ -43,18 +48,14 @@ def test_fal_service_mock():
 
 def test_endpoint_schemas():
     from src.modules.avatars.schemas import GenerateBaseRequest
-    from pydantic import ValidationError
 
     req1 = GenerateBaseRequest(
         prompt="young woman", age=28, model="seedream_v5", aspect_ratio="16:9"
     )
     assert req1.age == 28
 
-    try:
-        GenerateBaseRequest(prompt="young woman", model="seedream_v5")
-        raise AssertionError("GenerateBaseRequest should require age")
-    except ValidationError:
-        pass
+    req2 = GenerateBaseRequest(prompt="young woman", model="seedream_v5")
+    assert req2.age is None
 
 
 def test_aspect_ratio_mapping():
@@ -101,28 +102,50 @@ def test_fal_normalize_images_handles_nested_shapes():
     ]
 
 
-def test_wait_for_completion_supports_response_url(monkeypatch):
+def test_submit_and_wait_uses_synchronous_response_images(monkeypatch):
     service = FalService()
 
-    statuses = [
-        {"status": "IN_QUEUE"},
-        {"status": "COMPLETED", "response_url": "https://queue.fal.run/fake-result"},
-    ]
-
-    async def fake_status(endpoint: str, request_id: str, *, status_url=None):
-        return statuses.pop(0)
-
-    async def fake_result(endpoint: str, request_id: str, *, result_url=None):
-        assert result_url == "https://queue.fal.run/fake-result"
+    async def fake_submit_text_to_image(**kwargs):
         return {"images": [{"url": "https://cdn.example.com/final.png"}]}
 
-    monkeypatch.setattr(service, "get_request_status", fake_status)
-    monkeypatch.setattr(service, "get_request_result", fake_result)
-    service.poll_interval_seconds = 0
-
-    result = asyncio.run(service.wait_for_completion("fal-ai/gpt-image-1.5", "req-1"))
-    assert result["request_id"] == "req-1"
+    monkeypatch.setattr(service, "submit_text_to_image", fake_submit_text_to_image)
+    result = asyncio.run(service.submit_and_wait("openai_image_1_5", "prompt"))
     assert result["images"][0]["url"] == "https://cdn.example.com/final.png"
+
+
+def test_submit_and_wait_rejects_missing_images_without_queue_polling(monkeypatch):
+    service = FalService()
+
+    async def fake_submit_text_to_image(**kwargs):
+        return {"request_id": "req-123"}
+
+    monkeypatch.setattr(service, "submit_text_to_image", fake_submit_text_to_image)
+
+    try:
+        asyncio.run(service.submit_and_wait("openai_image_1_5", "prompt"))
+        raise AssertionError("submit_and_wait should reject responses without images")
+    except fal_module.FalResponseError as exc:
+        assert "did not include a usable image URL" in str(exc)
+
+
+def test_readiness_does_not_require_age_for_completion():
+    readiness = derive_avatar_readiness(
+        AvatarBuildState.DRAFT_PERSONALITY,
+        AvatarCompletionContext(
+            has_active_base=True,
+            reference_count=15,
+            training_status=AvatarTrainingStatus.COMPLETED,
+            name="Valid Name",
+            age=None,
+            description="A complete description that meets minimum length.",
+            backstory="x" * 100,
+            communication_principles_count=1,
+            industry_id=1,
+            role_paragraph="Role summary",
+        ),
+    )
+    assert "Age is required." not in readiness.completion_blockers
+    assert readiness.can_complete_avatar is True
 
 
 def test_access_and_refresh_tokens_are_typed():

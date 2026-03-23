@@ -215,14 +215,14 @@ class AvatarUpdate(BaseModel):
 
 class GenerateBaseRequest(BaseModel):
     prompt: str = Field(min_length=2)
-    age: int = Field(ge=1, le=120)
+    age: Optional[int] = Field(default=None, ge=1, le=120)
     model: Literal["openai_image_1_5", "google_nano_banana_2", "seedream_v5"]
     aspect_ratio: AspectRatio = "16:9"
 
 
 class EditBaseRequest(BaseModel):
     prompt: str = Field(min_length=2)
-    age: int = Field(ge=1, le=120)
+    age: Optional[int] = Field(default=None, ge=1, le=120)
     model: Literal["openai_image_1_5", "google_nano_banana_2", "seedream_v5"]
     reference_image_urls: Optional[List[str]] = None
     mask_image_url: Optional[str] = None

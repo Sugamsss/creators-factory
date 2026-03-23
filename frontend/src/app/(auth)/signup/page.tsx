@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { getPostLoginPath, useAuth } from "@/features/auth";
 
-export default function SignupPage() {
+function SignupPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [name, setName] = useState("");
@@ -124,5 +124,13 @@ export default function SignupPage() {
         </p>
       </div>
     </motion.div>
+  );
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense fallback={<div className="text-sm text-[#5c6d66]">Loading...</div>}>
+      <SignupPageContent />
+    </Suspense>
   );
 }

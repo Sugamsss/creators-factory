@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { motion, AnimatePresence } from "framer-motion";
 import {
   attachImage,
   deleteAttachment,
@@ -17,41 +16,79 @@ import {
   type VisualVersion,
 } from "@/features/avatars/services/avatarApi";
 import type { Attachment } from "@/features/avatars/types";
+import { cn } from "@/shared/lib/utils";
+import { pipelinePanelClass } from "./pipelineControls";
+import { AttachmentStrip } from "./visual/AttachmentStrip";
+import { ToolRail } from "./visual/ToolRail";
+import { VersionStrip } from "./visual/VersionStrip";
+import {
+  isAspectRatio,
+  MODEL_MAPPING,
+  MODEL_OPTIONS,
+  REVERSE_MODEL_MAPPING,
+  SUPPORTED_ASPECT_RATIOS,
+  type AspectRatio,
+  type ModelLabel,
+} from "./visual/types";
 
 interface VisualIdentityStepProps {
   avatarId: string;
 }
 
-type AspectRatio = "1:1" | "3:4" | "4:3" | "9:16" | "16:9";
+const PROMPT_MIN_LENGTH = 10;
+const AGE_MIN = 1;
+const AGE_MAX = 120;
+const ERROR_BANNER_DISMISS_MS = 5000;
+const GENERATION_POLL_INTERVAL_MS = 2500;
+const GENERATION_POLL_TIMEOUT_MS = 300000;
 
-const MODEL_MAPPING = {
-  "ChatGPT": "openai_image_1_5",
-  "Nano Banana": "google_nano_banana_2",
-  "Seedream v5 Lite": "seedream_v5"
-} as const;
+function getAspectFrameClass(aspect: AspectRatio): string {
+  if (aspect === "1:1") return "aspect-square h-full";
+  if (aspect === "3:4") return "aspect-[3/4] h-full";
+  if (aspect === "9:16") return "aspect-[9/16] h-full";
+  if (aspect === "4:3") return "aspect-[4/3] w-full";
+  return "aspect-[16/9] w-full";
+}
 
-const REVERSE_MODEL_MAPPING: Record<string, string> = {
-  "openai_image_1_5": "ChatGPT",
-  "google_nano_banana_2": "Nano Banana",
-  "seedream_v5": "Seedream v5 Lite"
-};
-const SUPPORTED_ASPECT_RATIOS: AspectRatio[] = ["1:1", "3:4", "9:16", "4:3", "16:9"];
+function parseAgeValue(raw: string): number {
+  return Number(raw);
+}
 
-const isAspectRatio = (value: string): value is AspectRatio =>
-  SUPPORTED_ASPECT_RATIOS.includes(value as AspectRatio);
+function sanitizeAgeInput(value: string): string {
+  return value.replace(/\D/g, "").slice(0, 3);
+}
 
 export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
-  const [activeAspect, setActiveAspect] = useState<AspectRatio>("16:9");
-  const [activeModel, setActiveModel] = useState("Seedream v5 Lite");
+  const [generationAspect, setGenerationAspect] = useState<AspectRatio>("3:4");
+  const [activeModel, setActiveModel] = useState<ModelLabel>("ChatGPT");
+  const [openMenu, setOpenMenu] = useState<"aspect" | "model" | null>(null);
+
   const [age, setAge] = useState<string>("");
   const [prompt, setPrompt] = useState("");
+
   const [isGenerating, setIsGenerating] = useState(false);
   const [versions, setVersions] = useState<VisualVersion[]>([]);
   const [activeVersionId, setActiveVersionId] = useState<number | null>(null);
+
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+
+  const prevAttachmentCountRef = useRef(attachments.length);
+  useEffect(() => {
+    const hadAttachments = prevAttachmentCountRef.current > 0;
+    const hasAttachments = attachments.length > 0;
+    prevAttachmentCountRef.current = attachments.length;
+
+    // Only auto-switch model on transition between having/not-having attachments
+    if (hasAttachments && !hadAttachments) {
+      setActiveModel("Seedream v5 Lite");
+    } else if (!hasAttachments && hadAttachments) {
+      setActiveModel("ChatGPT");
+    }
+  }, [attachments]);
+
+  const [error, setError] = useState<string | null>(null);
   const [maskImageUrl, setMaskImageUrl] = useState<string | null>(null);
 
   const [scale, setScale] = useState(1);
@@ -64,34 +101,52 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const menusContainerRef = useRef<HTMLDivElement>(null);
+  const hasInitializedGenerationAspectRef = useRef(false);
+  const pendingOperationIdRef = useRef<string | null>(null);
+  const generationBaselineVersionRef = useRef<number | null>(null);
+  const generationStartedAtRef = useRef<number | null>(null);
 
-  const activeVersion = versions.find(v => v.id === activeVersionId) || versions[0];
+  const activeVersion = useMemo(
+    () => versions.find((version) => version.id === activeVersionId) || versions[0],
+    [activeVersionId, versions]
+  );
+  const previewAspect = useMemo<AspectRatio>(() => {
+    if (activeVersion && isAspectRatio(activeVersion.aspect_ratio)) {
+      return activeVersion.aspect_ratio;
+    }
+    return generationAspect;
+  }, [activeVersion, generationAspect]);
 
-  const fetchVersions = useCallback(async () => {
+  const isPromptValid = prompt.trim().length >= PROMPT_MIN_LENGTH;
+
+  const hasAgeInput = age.trim().length > 0;
+  const parsedAge = parseAgeValue(age);
+  const isAgeValid =
+    !hasAgeInput || (Number.isInteger(parsedAge) && parsedAge >= AGE_MIN && parsedAge <= AGE_MAX);
+  const ageErrorMessage =
+    hasAgeInput && !isAgeValid ? `Age must be a whole number between ${AGE_MIN} and ${AGE_MAX}.` : null;
+
+  const fetchVersions = useCallback(async (): Promise<VisualVersion[]> => {
     try {
       const data = await getVisualVersions(avatarId);
       setVersions(data);
       if (data.length > 0) {
-        const active = data.find((v: VisualVersion) => v.is_active_base) || data[0];
+        const active = data.find((version) => version.is_active_base) || data[0];
         setActiveVersionId(active.id);
-        if (isAspectRatio(active.aspect_ratio)) {
-          setActiveAspect(active.aspect_ratio);
+        if (!hasInitializedGenerationAspectRef.current && isAspectRatio(active.aspect_ratio)) {
+          setGenerationAspect(active.aspect_ratio);
+          hasInitializedGenerationAspectRef.current = true;
         }
-        setActiveModel(REVERSE_MODEL_MAPPING[active.model_used] || active.model_used);
+        setActiveModel(REVERSE_MODEL_MAPPING[active.model_used] || "Seedream v5 Lite");
+      } else {
+        setActiveVersionId(null);
       }
-    } catch (error) {
-      console.error("Failed to fetch versions:", error);
-    }
-  }, [avatarId]);
-
-  const fetchAvatarBasics = useCallback(async () => {
-    try {
-      const avatar = await getAvatar(Number(avatarId));
-      if (avatar.age) {
-        setAge(String(avatar.age));
-      }
+      return data;
     } catch (loadError) {
-      console.error("Failed to fetch avatar basics:", loadError);
+      console.error("Failed to fetch versions", loadError);
+      return [];
     }
   }, [avatarId]);
 
@@ -100,7 +155,16 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
       const data = await getAttachments(avatarId);
       setAttachments(data);
     } catch (loadError) {
-      console.error("Failed to fetch attachments:", loadError);
+      console.error("Failed to fetch attachments", loadError);
+    }
+  }, [avatarId]);
+
+  const fetchAvatarBasics = useCallback(async () => {
+    try {
+      const avatar = await getAvatar(Number(avatarId));
+      if (avatar.age) setAge(String(avatar.age));
+    } catch (loadError) {
+      console.error("Failed to fetch avatar basics", loadError);
     }
   }, [avatarId]);
 
@@ -111,77 +175,170 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
   }, [fetchAttachmentData, fetchAvatarBasics, fetchVersions]);
 
   useEffect(() => {
-    console.log(`Setting up SSE connection for avatar ${avatarId}...`);
     const source = subscribeAvatarEvents(
-      Number(avatarId), 
+      Number(avatarId),
       (eventType, payload) => {
-        console.log("VisualIdentityStep received event:", eventType, payload);
-        
-        switch (eventType) {
-          case "avatar.visual.generation.started": {
+        const eventOperationId =
+          typeof payload.operationId === "string" ? payload.operationId : null;
+
+        if (eventType === "avatar.visual.generation.started") {
+          if (
+            pendingOperationIdRef.current &&
+            eventOperationId === pendingOperationIdRef.current
+          ) {
             setIsGenerating(true);
             setError(null);
-            break;
           }
-          case "avatar.visual.generation.completed": {
-            const data = payload.version as Record<string, unknown> | null;
-            if (data) {
-              setVersions(prev => {
-                const exists = prev.some(v => v.id === (data.id as number));
-                if (exists) return prev;
-                const newVersion: VisualVersion = {
-                  id: data.id as number,
-                  version_number: data.version_number as number,
-                  image_url: data.image_url as string,
-                  prompt: data.prompt as string,
-                  model_used: (data.model_used as string) || (data.model as string),
-                  aspect_ratio: data.aspect_ratio as string,
-                  is_active_base: (data.is_active_base as boolean) ?? true,
-                  is_edit: (data.is_edit as boolean) ?? false,
-                  created_at: (data.created_at as string) || new Date().toISOString(),
-                };
-                return [newVersion, ...prev];
-              });
-              setActiveVersionId(data.id as number);
-              setScale(1);
-              setOffset({ x: 0, y: 0 });
-              const ar = data.aspect_ratio as string;
-              if (ar && isAspectRatio(ar)) {
-                setActiveAspect(ar);
-              }
-            }
+        }
+
+        if (eventType === "avatar.visual.generation.completed") {
+          const data = payload.version as Record<string, unknown> | null;
+          if (data) {
+            setVersions((previous) => {
+              const id = Number(data.id);
+              if (previous.some((item) => item.id === id)) return previous;
+              const next: VisualVersion = {
+                id,
+                version_number: Number(data.version_number),
+                image_url: String(data.image_url),
+                prompt: String(data.prompt || ""),
+                model_used: String(data.model_used || data.model || "seedream_v5"),
+                aspect_ratio: String(data.aspect_ratio || generationAspect),
+                is_active_base: Boolean(data.is_active_base ?? true),
+                is_edit: Boolean(data.is_edit ?? false),
+                created_at: String(data.created_at || new Date().toISOString()),
+              };
+              return [next, ...previous];
+            });
+            setActiveVersionId(Number(data.id));
+            setScale(1);
+            setOffset({ x: 0, y: 0 });
+          } else {
+            void fetchVersions();
+          }
+          if (
+            !pendingOperationIdRef.current ||
+            !eventOperationId ||
+            eventOperationId === pendingOperationIdRef.current
+          ) {
+            pendingOperationIdRef.current = null;
+            generationBaselineVersionRef.current = null;
+            generationStartedAtRef.current = null;
             setIsGenerating(false);
-            break;
           }
-          case "avatar.visual.generation.failed": {
+          
+        }
+
+        if (eventType === "avatar.visual.generation.failed") {
+          if (
+            !pendingOperationIdRef.current ||
+            !eventOperationId ||
+            eventOperationId === pendingOperationIdRef.current
+          ) {
+            pendingOperationIdRef.current = null;
+            generationBaselineVersionRef.current = null;
+            generationStartedAtRef.current = null;
             setError(String(payload.error || "Generation failed"));
             setIsGenerating(false);
-            break;
           }
-          default:
-            break;
         }
       },
-      (error) => {
-        console.error("VisualIdentityStep SSE connection error:", error);
-        // Don't set isGenerating = false here automatically as EventSource will retry
+      () => {
+        // Let EventSource auto-reconnect silently.
       }
     );
 
-    source.onopen = () => {
-      console.log("VisualIdentityStep SSE connection established");
+    return () => source.close();
+  }, [avatarId, fetchVersions, generationAspect]);
+
+  useEffect(() => {
+    if (!isGenerating) return;
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const pollUntilSettled = async () => {
+      if (cancelled) return;
+
+      const baselineVersion = generationBaselineVersionRef.current;
+      const startedAt = generationStartedAtRef.current;
+      if (baselineVersion == null || startedAt == null) return;
+
+      const latestVersions = await fetchVersions();
+      if (cancelled) return;
+
+      const latestVersionNumber =
+        latestVersions.length > 0 ? latestVersions[0].version_number : null;
+
+      if (latestVersionNumber != null && latestVersionNumber > baselineVersion) {
+        pendingOperationIdRef.current = null;
+        generationBaselineVersionRef.current = null;
+        generationStartedAtRef.current = null;
+        setIsGenerating(false);
+        setError(null);
+        
+        return;
+      }
+
+      if (Date.now() - startedAt >= GENERATION_POLL_TIMEOUT_MS) {
+        pendingOperationIdRef.current = null;
+        generationBaselineVersionRef.current = null;
+        generationStartedAtRef.current = null;
+        setIsGenerating(false);
+        setError("Generation status timed out. Latest versions were refreshed.");
+        return;
+      }
+
+      timeoutId = setTimeout(pollUntilSettled, GENERATION_POLL_INTERVAL_MS);
     };
 
+    timeoutId = setTimeout(pollUntilSettled, GENERATION_POLL_INTERVAL_MS);
+
     return () => {
-      console.log("Closing VisualIdentityStep SSE connection");
-      source.close();
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [avatarId]);
+  }, [fetchVersions, isGenerating]);
+
+  useEffect(() => {
+    const textarea = promptTextareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = "0px";
+    const scrollHeight = textarea.scrollHeight;
+    const maxHeight = window.innerWidth < 768 ? 128 : 144;
+    textarea.style.height = `${Math.min(scrollHeight, maxHeight)}px`;
+    textarea.style.overflowY = scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [prompt]);
+
+  useEffect(() => {
+    if (!error) return;
+    const timer = setTimeout(() => setError(null), ERROR_BANNER_DISMISS_MS);
+    return () => clearTimeout(timer);
+  }, [error]);
+
+  useEffect(() => {
+    const handleCloseMenus = (event: MouseEvent) => {
+      if (!menusContainerRef.current?.contains(event.target as Node)) {
+        setOpenMenu(null);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenMenu(null);
+    };
+
+    document.addEventListener("mousedown", handleCloseMenus);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleCloseMenus);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || !isAnnotating) return;
 
     const resizeCanvas = () => {
       const parent = canvas.parentElement;
@@ -190,211 +347,23 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
       const scaleFactor = window.devicePixelRatio || 1;
       canvas.width = rect.width * scaleFactor;
       canvas.height = rect.height * scaleFactor;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.scale(scaleFactor, scaleFactor);
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-      }
+
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.scale(scaleFactor, scaleFactor);
+      context.lineCap = "round";
+      context.lineJoin = "round";
     };
 
-    if (isAnnotating) {
-      resizeCanvas();
-      window.addEventListener('resize', resizeCanvas);
-    }
+    resizeCanvas();
+    window.addEventListener("resize", resizeCanvas);
+    return () => window.removeEventListener("resize", resizeCanvas);
+  }, [activeVersionId, isAnnotating]);
 
-    return () => window.removeEventListener('resize', resizeCanvas);
-  }, [isAnnotating, activeVersionId]);
-
-  const handleSend = async () => {
-    if (!prompt.trim() || isGenerating) return;
-    const parsedAge = Number(age);
-    if (!Number.isInteger(parsedAge) || parsedAge < 1 || parsedAge > 120) {
-      setError("Age is required and must be a whole number between 1 and 120.");
-      return;
-    }
-
-    setIsGenerating(true);
-    setError(null);
-    setInfo(null);
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    // Determine mode: only use edit when we already have an image to edit from
-    const isEditMode = versions.length > 0 || attachments.length > 0;
-    const selectedModel =
-      MODEL_MAPPING[activeModel as keyof typeof MODEL_MAPPING] || "seedream_v5";
-
-    // Build reference image list (active version first, then attachments)
-    const orderedReferenceImages: string[] = [];
-    if (activeVersion) {
-      orderedReferenceImages.push(activeVersion.image_url);
-    }
-    orderedReferenceImages.push(...attachments.map((a) => a.url));
-
-    const apiPayload = isEditMode
-      ? {
-          prompt,
-          model: selectedModel,
-          aspect_ratio: activeAspect,
-          age: parsedAge,
-          reference_image_urls: orderedReferenceImages,
-          mask_image_url:
-            selectedModel === "openai_image_1_5" && maskImageUrl
-              ? maskImageUrl
-              : undefined,
-        }
-      : {
-          prompt,
-          model: selectedModel,
-          aspect_ratio: activeAspect,
-          age: parsedAge,
-        };
-
-    try {
-      if (isEditMode) {
-        await editBaseImage(avatarId, apiPayload, controller.signal);
-      } else {
-        await generateBaseImage(avatarId, apiPayload, controller.signal);
-      }
-      setInfo("Generation request accepted. Waiting for completion event.");
-      // The backend accepted the request (202). isGenerating remains true
-      // until the SSE "completed" or "failed" event arrives.
-    } catch (apiError) {
-      if (apiError instanceof Error && apiError.name === "AbortError") {
-        // User cancelled — reset spinner
-        setIsGenerating(false);
-      } else {
-        console.error("Failed to start generation:", apiError);
-        setError(apiError instanceof Error ? apiError.message : "Failed to start generation");
-        setIsGenerating(false);
-      }
-    } finally {
-      abortControllerRef.current = null;
-    }
-  };
-
-  const handleFileUpload = async (files: FileList | File[]) => {
-    const fileArray = Array.from(files);
-    const imageFiles = fileArray.filter(f => f.type.startsWith('image/'));
-    
-    if (imageFiles.length === 0) return;
-    
-    setIsUploading(true);
-    setError(null);
-    
-    try {
-      for (const file of imageFiles) {
-        const attachment = await attachImage(avatarId, file);
-        setAttachments(prev => [...prev, attachment]);
-      }
-    } catch (error) {
-      console.error("Failed to upload files:", error);
-      setError(error instanceof Error ? error.message : "Upload failed");
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const handleRemoveAttachment = async (attachmentId: number) => {
-    try {
-      await deleteAttachment(avatarId, attachmentId);
-      
-      setAttachments(prev => {
-        return prev.filter(a => a.id !== attachmentId);
-      });
-    } catch (error) {
-      console.error("Failed to remove attachment:", error);
-      setError(error instanceof Error ? error.message : "Delete failed");
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    handleFileUpload(e.dataTransfer.files);
-  };
-
-  const handleToolAction = async (tool: string) => {
-    switch (tool) {
-      case 'brush':
-        if (isAnnotating) {
-          const mask = exportMaskImage();
-          if (mask) {
-            setMaskImageUrl(mask);
-            setInfo("Mask captured. Next ChatGPT edit will apply the mask.");
-          }
-          setIsAnnotating(false);
-        } else {
-          setIsAnnotating(true);
-          setInfo("Mask mode enabled. Draw on the canvas, then tap brush again to capture the mask.");
-        }
-        break;
-      case 'add':
-        setScale(prev => Math.min(prev + 0.25, 3));
-        break;
-      case 'remove':
-        setScale(prev => {
-          const newScale = Math.max(prev - 0.25, 1);
-          if (newScale === 1) {
-            setOffset({ x: 0, y: 0 });
-          }
-          return newScale;
-        });
-        break;
-      case 'download':
-        if (activeVersion) {
-          const link = document.createElement('a');
-          link.href = activeVersion.image_url;
-          link.download = `avatar-v${activeVersion.version_number}.png`;
-          link.target = '_blank';
-          link.click();
-        }
-        break;
-      case 'delete':
-        if (activeVersion) {
-          try {
-            const currentVersionId = activeVersion.id;
-            const wasLastVersion = versions.length === 1;
-            await deleteVisualVersion(avatarId, currentVersionId);
-            await fetchVersions();
-            if (wasLastVersion) {
-              setActiveVersionId(null);
-              setScale(1);
-              setOffset({ x: 0, y: 0 });
-            }
-          } catch (err) {
-            console.error("Failed to delete version:", err);
-          }
-        }
-        break;
-      case 'attach':
-        if (activeVersion) {
-          try {
-            const response = await fetch(activeVersion.image_url);
-            const blob = await response.blob();
-            const file = new File([blob], `avatar-v${activeVersion.version_number}.png`, { type: 'image/png' });
-            const attachment = await attachImage(avatarId, file);
-            setAttachments(prev => [...prev, attachment]);
-          } catch (err) {
-            console.error("Failed to attach image:", err);
-          }
-        }
-        break;
-      case 'clear_mask':
-        clearMaskCanvas();
-        setMaskImageUrl(null);
-        setInfo("Mask cleared.");
-        break;
-    }
-  };
-
-  const exportMaskImage = (): string | null => {
+  const exportMaskImage = () => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
+
     try {
       return canvas.toDataURL("image/png");
     } catch {
@@ -404,529 +373,661 @@ export function VisualIdentityStep({ avatarId }: VisualIdentityStepProps) {
 
   const clearMaskCanvas = () => {
     const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
   };
 
-  const onMouseDown = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (scale > 1) {
-      setIsPanning(prev => !prev);
-      setLastMousePos({ x: e.clientX, y: e.clientY });
-      e.preventDefault();
-    } else if (isAnnotating) {
+  const handleToolAction = async (tool: string) => {
+    if (tool === "brush") {
+      if (isAnnotating) {
+        const mask = exportMaskImage();
+        if (mask) {
+          setMaskImageUrl(mask);
+          
+        }
+        setIsAnnotating(false);
+      } else {
+        setIsAnnotating(true);
+        
+      }
+      return;
+    }
+
+    if (tool === "clear_mask") {
+      clearMaskCanvas();
+      setMaskImageUrl(null);
+      
+      return;
+    }
+
+    if (tool === "add") {
+      setScale((previous) => Math.min(previous + 0.25, 3));
+      return;
+    }
+
+    if (tool === "remove") {
+      setScale((previous) => {
+        const next = Math.max(previous - 0.25, 1);
+        if (next === 1) setOffset({ x: 0, y: 0 });
+        return next;
+      });
+      return;
+    }
+
+    if (tool === "download" && activeVersion) {
+      const link = document.createElement("a");
+      link.href = activeVersion.image_url;
+      link.download = `avatar-v${activeVersion.version_number}.png`;
+      link.target = "_blank";
+      link.click();
+      return;
+    }
+
+    if (tool === "delete" && activeVersion) {
+      try {
+        const removingId = activeVersion.id;
+        const isLast = versions.length === 1;
+        await deleteVisualVersion(avatarId, removingId);
+        await fetchVersions();
+        if (isLast) {
+          setActiveVersionId(null);
+          setScale(1);
+          setOffset({ x: 0, y: 0 });
+        }
+
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "Failed to delete version.");
+      }
+      return;
+    }
+
+    if (tool === "attach" && activeVersion) {
+      try {
+        const response = await fetch(activeVersion.image_url);
+        const blob = await response.blob();
+        const file = new File([blob], `avatar-v${activeVersion.version_number}.png`, {
+          type: "image/png",
+        });
+        const attachment = await attachImage(avatarId, file);
+        setAttachments((previous) => [...previous, attachment]);
+
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "Failed to attach image.");
+      }
+    }
+  };
+
+  const handleFileUpload = async (files: FileList | File[]) => {
+    const imageFiles = Array.from(files).filter((file) => file.type.startsWith("image/"));
+    if (imageFiles.length === 0) return;
+
+    setIsUploading(true);
+    setError(null);
+
+    try {
+      for (const file of imageFiles) {
+        const attachment = await attachImage(avatarId, file);
+        setAttachments((previous) => [...previous, attachment]);
+      }
+
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Upload failed.");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleRemoveAttachment = async (attachmentId: number) => {
+    try {
+      await deleteAttachment(avatarId, attachmentId);
+      setAttachments((previous) => previous.filter((attachment) => attachment.id !== attachmentId));
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Delete failed.");
+    }
+  };
+
+  const onMouseDown = (event: React.MouseEvent) => {
+    event.stopPropagation();
+
+    if (isAnnotating) {
       setIsDrawing(true);
-      draw(e);
+      draw(event);
+      return;
+    }
+
+    if (scale > 1) {
+      setIsPanning(true);
+      setLastMousePos({ x: event.clientX, y: event.clientY });
+      event.preventDefault();
     }
   };
 
-  const onMouseMove = (e: React.MouseEvent) => {
+  const onMouseMove = (event: React.MouseEvent) => {
     if (isPanning && scale > 1) {
-      const dx = e.clientX - lastMousePos.x;
-      const dy = e.clientY - lastMousePos.y;
-      setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
-      setLastMousePos({ x: e.clientX, y: e.clientY });
-    } else if (isDrawing) {
-      draw(e);
+      const dx = event.clientX - lastMousePos.x;
+      const dy = event.clientY - lastMousePos.y;
+      setOffset((previous) => ({ x: previous.x + dx, y: previous.y + dy }));
+      setLastMousePos({ x: event.clientX, y: event.clientY });
+      return;
     }
+
+    if (isDrawing) draw(event);
   };
 
   const onMouseUp = () => {
     setIsDrawing(false);
-    const ctx = canvasRef.current?.getContext('2d');
-    if (ctx) ctx.beginPath();
+    setIsPanning(false);
+    const context = canvasRef.current?.getContext("2d");
+    if (context) context.beginPath();
   };
 
-  const draw = (e: React.MouseEvent | React.TouchEvent) => {
+  const draw = (event: React.MouseEvent | React.TouchEvent) => {
     if (!isDrawing || !isAnnotating || !canvasRef.current) return;
 
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = (('clientX' in e ? (e as React.MouseEvent).clientX : (e as React.TouchEvent).touches[0].clientX) - rect.left);
-    const y = (('clientY' in e ? (e as React.MouseEvent).clientY : (e as React.TouchEvent).touches[0].clientY) - rect.top);
+    const pointX =
+      ("clientX" in event
+        ? (event as React.MouseEvent).clientX
+        : (event as React.TouchEvent).touches[0].clientX) - rect.left;
+    const pointY =
+      ("clientY" in event
+        ? (event as React.MouseEvent).clientY
+        : (event as React.TouchEvent).touches[0].clientY) - rect.top;
 
-    ctx.lineWidth = 20;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
-
-    ctx.lineTo(x, y);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(x, y);
+    context.lineWidth = 20;
+    context.strokeStyle = "rgba(239, 68, 68, 0.45)";
+    context.lineTo(pointX, pointY);
+    context.stroke();
+    context.beginPath();
+    context.moveTo(pointX, pointY);
   };
 
   const handleStop = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
+    abortControllerRef.current?.abort();
+    pendingOperationIdRef.current = null;
+    generationBaselineVersionRef.current = null;
+    generationStartedAtRef.current = null;
     setIsGenerating(false);
   };
 
-  const getCursorStyle = () => {
-    if (scale > 1) {
-      return isPanning ? 'grabbing' : 'grab';
+  const handleSend = async () => {
+    if (isGenerating) return;
+
+    const trimmedPrompt = prompt.trim();
+    if (trimmedPrompt.length < PROMPT_MIN_LENGTH) {
+      setError(`Prompt must be at least ${PROMPT_MIN_LENGTH} characters.`);
+      return;
     }
-    if (isAnnotating) {
-      return 'crosshair';
+
+    if (hasAgeInput && !isAgeValid) {
+      setError(`Age must be a whole number between ${AGE_MIN} and ${AGE_MAX}.`);
+      return;
     }
-    return 'default';
+
+    setError(null);
+    const currentTopVersion = versions.length > 0 ? versions[0].version_number : 0;
+    generationBaselineVersionRef.current = currentTopVersion;
+    generationStartedAtRef.current = Date.now();
+    pendingOperationIdRef.current = null;
+    setIsGenerating(true);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    const selectedModel = MODEL_MAPPING[activeModel] || "seedream_v5";
+    const isEditMode = attachments.length > 0 || Boolean(maskImageUrl);
+
+    const orderedReferenceImages: string[] = [];
+    if (maskImageUrl && activeVersion) {
+      orderedReferenceImages.push(activeVersion.image_url);
+    }
+    orderedReferenceImages.push(...attachments.map((attachment) => attachment.url));
+
+    const payload = isEditMode
+      ? {
+          prompt: trimmedPrompt,
+          model: selectedModel,
+          aspect_ratio: generationAspect,
+          ...(hasAgeInput ? { age: parsedAge } : {}),
+          reference_image_urls: orderedReferenceImages,
+          mask_image_url:
+            selectedModel === "openai_image_1_5" && maskImageUrl ? maskImageUrl : undefined,
+        }
+      : {
+          prompt: trimmedPrompt,
+          model: selectedModel,
+          aspect_ratio: generationAspect,
+          ...(hasAgeInput ? { age: parsedAge } : {}),
+        };
+
+    try {
+      const response = isEditMode
+        ? await editBaseImage(avatarId, payload, controller.signal)
+        : await generateBaseImage(avatarId, payload, controller.signal);
+      pendingOperationIdRef.current = response.operation_id;
+
+    } catch (loadError) {
+      if (loadError instanceof Error && loadError.name === "AbortError") {
+        pendingOperationIdRef.current = null;
+        generationBaselineVersionRef.current = null;
+        generationStartedAtRef.current = null;
+        setIsGenerating(false);
+      } else {
+        pendingOperationIdRef.current = null;
+        generationBaselineVersionRef.current = null;
+        generationStartedAtRef.current = null;
+        setError(loadError instanceof Error ? loadError.message : "Failed to start generation.");
+        setIsGenerating(false);
+      }
+    } finally {
+      abortControllerRef.current = null;
+    }
   };
 
-  const parsedAge = Number(age);
-  const isAgeValid = Number.isInteger(parsedAge) && parsedAge >= 1 && parsedAge <= 120;
+  const handleSelectVersion = async (versionId: number) => {
+    try {
+      await setActiveBase(avatarId, versionId);
+      await fetchVersions();
+      setActiveVersionId(versionId);
+      setError(null);
+    } catch (selectionError) {
+      const message =
+        selectionError instanceof Error
+          ? selectionError.message
+          : "Failed to set active base image.";
+
+      if (message.toLowerCase().includes("invalidate")) {
+        const confirmed = window.confirm(
+          "Changing base image will invalidate references, training, and reactions. Continue?"
+        );
+
+        if (confirmed) {
+          try {
+            await setActiveBase(avatarId, versionId, { confirmInvalidation: true });
+            await fetchVersions();
+            setActiveVersionId(versionId);
+            setError(null);
+            return;
+          } catch (retryError) {
+            setError(
+              retryError instanceof Error
+                ? retryError.message
+                : "Failed to set active base image."
+            );
+            return;
+          }
+        }
+      }
+
+      setError(message);
+    }
+  };
+
+  const handlePromptKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      void handleSend();
+    }
+  };
+
+  const onDragOver = (event: React.DragEvent) => {
+    event.preventDefault();
+    if (!isDraggingFiles) setIsDraggingFiles(true);
+  };
+
+  const onDragLeave = (event: React.DragEvent) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+    setIsDraggingFiles(false);
+  };
+
+  const onDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    setIsDraggingFiles(false);
+    void handleFileUpload(event.dataTransfer.files);
+  };
 
   return (
-    <div 
-      className="h-full flex flex-col overflow-hidden relative group/workspace bg-transparent"
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
+    <div
+      className="relative flex h-full min-h-0 flex-col overflow-hidden"
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
     >
-      {/* Heavy Noise Texture & Frosted Glass Base */}
-      <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
-        <div className="absolute inset-0 bg-[#f8faf9]/60 backdrop-blur-[100px]" />
-        <div 
-          className="absolute inset-0 opacity-[0.4] mix-blend-soft-light"
-          style={{ 
-            backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`
-          }}
-        />
-        <div 
-          className="absolute inset-0 opacity-[0.2] mix-blend-overlay"
-          style={{ 
-            backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n2'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.4' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n2)'/%3E%3C/svg%3E")`
-          }}
-        />
-        <div className="absolute inset-0 bg-gradient-to-tr from-[#1a3a2a]/0 via-transparent to-[#3c9f95]/5 opacity-40" />
-      </div>
-      
-      {/* ─── Fixed-Position UI Layer ─── */}
-      <div className="absolute top-0 left-0 right-0 bottom-[140px] z-30 pointer-events-none">
-        {/* Floating Tools Rail */}
-        <div className="absolute right-8 top-1/2 -translate-y-1/2 flex flex-col gap-2 p-1.5 rounded-full bg-white/80 backdrop-blur-md border border-[#e4ebe4] shadow-2xl pointer-events-auto">
-          {[
-            { icon: "brush", label: "Brush", action: "brush", active: isAnnotating },
-            { icon: "ink_eraser", label: "Clear Mask", action: "clear_mask", disabled: !isAnnotating && !maskImageUrl },
-            { icon: "add", label: "Zoom In", action: "add", disabled: scale >= 3 },
-            { icon: "remove", label: "Zoom Out", action: "remove", disabled: scale <= 1 },
-            { icon: "download", label: "Download", action: "download" },
-            { icon: "delete", label: "Delete", action: "delete", disabled: !activeVersion },
-            { icon: "attach_file", label: "Attach", action: "attach", disabled: !activeVersion },
-          ].map((tool) => (
-            <button
-              key={tool.label}
-              title={tool.label}
-              aria-label={tool.label}
-              aria-pressed={Boolean(tool.active)}
-              onClick={() => handleToolAction(tool.action)}
-              disabled={Boolean(tool.disabled)}
-              className={`flex items-center justify-center rounded-full transition-all duration-200 disabled:opacity-30 disabled:hover:scale-100
-                ${tool.active 
-                  ? 'bg-[#1a3a2a] text-white shadow-lg scale-110' 
-                  : 'text-[#1a3a2a]/60 border border-transparent hover:border-[#3c9f95] hover:text-[#3c9f95] hover:bg-white hover:scale-110'}`}
-              style={{ width: 36, height: 36 }}
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
-                {tool.icon}
-              </span>
-            </button>
-          ))}
-        </div>
+      <div className="absolute inset-0 z-0 bg-gradient-to-br from-[#f6f9f7] via-[#f4f8f6] to-[#edf3ef]" />
+      <div className="absolute inset-0 z-0 opacity-[0.03] grain-texture" />
 
-        {/* History Pill - Showing real versions */}
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 pointer-events-auto">
-          <div className="flex items-center gap-2 px-2 py-1.5 rounded-full bg-white/90 backdrop-blur-xl border border-[#e4ebe4] shadow-[0_8px_32px_-4px_rgba(0,0,0,0.1)] overflow-x-auto max-w-[400px] no-scrollbar">
-            {versions.length === 0 ? (
-              <div className="px-4 py-1 text-[10px] font-bold text-[#8ca1c5] uppercase tracking-wider">No history yet</div>
-            ) : (
-              versions.map((v) => (
-                <motion.button
-                  key={v.id}
-                  onClick={async () => {
-                    try {
-                      await setActiveBase(avatarId, v.id);
-                      await fetchVersions();
-                      setActiveVersionId(v.id);
-                      if (isAspectRatio(v.aspect_ratio)) {
-                        setActiveAspect(v.aspect_ratio);
-                      }
-                      setError(null);
-                    } catch (selectionError) {
-                      const message =
-                        selectionError instanceof Error
-                          ? selectionError.message
-                          : "Failed to set active base image";
-                      if (message.toLowerCase().includes("invalidate")) {
-                        const confirmed = window.confirm(
-                          "Changing base image will invalidate references, training, and reactions. Continue?"
-                        );
-                        if (confirmed) {
-                          try {
-                            await setActiveBase(avatarId, v.id, { confirmInvalidation: true });
-                            await fetchVersions();
-                            setActiveVersionId(v.id);
-                            setError(null);
-                            setInfo("Active base changed. Step 2 outputs were invalidated.");
-                            return;
-                          } catch (retryError) {
-                            setError(retryError instanceof Error ? retryError.message : "Failed to set active base image");
-                            return;
-                          }
-                        }
-                      }
-                      setError(message);
-                    }
-                  }}
-                  whileHover={{ scale: 1.1, y: -2 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="relative rounded-lg overflow-hidden border transition-all duration-200 shrink-0"
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderColor: activeVersionId === v.id ? "#3c9f95" : "transparent",
-                    opacity: activeVersionId === v.id ? 1 : 0.6,
-                  }}
-                >
-                  <Image src={v.image_url} width={32} height={32} className="w-full h-full object-cover" alt={`Version ${v.version_number}`} />
-                </motion.button>
-              ))
-            )}
+      {isDraggingFiles && (
+        <div className="absolute inset-4 z-50 flex items-center justify-center rounded-[28px] border-2 border-dashed border-[#3c9f95]/70 bg-[#ecf6f3]/90 backdrop-blur">
+          <div className="rounded-xl border border-[#cce3de] bg-white/85 px-5 py-4 text-center">
+            <p className="text-sm font-semibold text-[#1a3a2a]">Drop images to attach</p>
+            <p className="mt-1 text-xs text-[#5c6d66]">PNG, JPG, WEBP supported</p>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* ─── Canvas Workspace ─── */}
-      <div 
-        className="flex-1 min-h-0 relative flex items-center justify-center pointer-events-none p-12 overflow-hidden"
-      >
-        <div className="w-full h-full relative flex items-center justify-center">
-          <AnimatePresence mode="wait">
-            {/* Empty State - Glass with Grain */}
-            {!activeVersion && !isGenerating && (
-              <motion.div
-                key="empty-frame"
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="w-full h-full flex items-center justify-center"
-              >
-                <div 
-                  className={`relative max-w-full max-h-full overflow-hidden rounded-2xl shadow-lg pointer-events-auto
-                    ${activeAspect === '1:1' ? 'aspect-square h-full' : 
-                      activeAspect === '3:4' ? 'aspect-[3/4] h-full' : 
-                      activeAspect === '9:16' ? 'aspect-[9/16] h-full' : 
-                      activeAspect === '4:3' ? 'aspect-[4/3] w-full' : 
-                      'aspect-[16/9] w-full'}`}
-                >
-                  {/* Base gradient */}
-                  <div className="absolute inset-0 bg-gradient-to-br from-[#f5f7f6] to-[#e4ebe8]" />
-                  
-                  {/* Grain overlay - stationary */}
-                  <div className="absolute inset-0 grain-texture opacity-[0.025] pointer-events-none" />
-
-                  {/* Content */}
-                  <div className="relative z-10 flex flex-col items-center justify-center h-full gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-white/60 backdrop-blur-sm border border-white/30 shadow-sm flex items-center justify-center text-[#3c9f95]">
-                      <span className="material-symbols-outlined !text-[18px]">auto_awesome</span>
-                    </div>
-                    <div className="text-center px-4">
-                      <p className="text-[#1a3a2a] text-xs font-semibold tracking-wide">First Pass Generation</p>
-                      <p className="text-[#8ca1c5] text-[10px] mt-0.5">describe the Avatar you want to see below</p>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
+      <div className="relative z-10 flex min-h-0 flex-1 items-center justify-center px-3 pb-5 pt-4 md:px-8 md:pt-8">
+        <div className="relative flex h-full w-full max-w-6xl items-center justify-center">
+          <div
+            ref={containerRef}
+            className={cn(
+              "relative max-h-full max-w-full overflow-hidden rounded-[28px] border border-[#d6dbd4] bg-white shadow-[0_20px_45px_-26px_rgba(0,0,0,0.4)]",
+              getAspectFrameClass(previewAspect)
             )}
-
-            {(activeVersion || isGenerating) && (
-              <div className="w-full h-full flex items-center justify-center">
-                {/* Frame */}
-                <div 
-                  ref={containerRef}
-                  className={`relative max-w-full max-h-full overflow-hidden rounded-2xl shadow-lg pointer-events-auto
-                    ${activeAspect === '1:1' ? 'aspect-square h-full' : 
-                      activeAspect === '3:4' ? 'aspect-[3/4] h-full' : 
-                      activeAspect === '9:16' ? 'aspect-[9/16] h-full' : 
-                      activeAspect === '4:3' ? 'aspect-[4/3] w-full' : 
-                      'aspect-[16/9] w-full'}`}
-                  style={{ cursor: getCursorStyle() }}
-                  onMouseDown={onMouseDown}
-                  onMouseMove={onMouseMove}
-                  onMouseUp={onMouseUp}
-                  onMouseLeave={onMouseUp}
-                >
-                  {/* Loading overlay - First generation (no image yet) */}
-                  {isGenerating && !activeVersion && (
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="absolute inset-0 z-[55] flex flex-col items-center justify-center"
-                    >
-                      {/* Base gradient */}
-                      <div className="absolute inset-0 bg-gradient-to-br from-[#f5f7f6] to-[#e4ebe8]" />
-                      
-                      {/* Grain overlay - animated */}
-                      <motion.div 
-                        className="absolute inset-0 grain-texture opacity-[0.03] pointer-events-none"
-                        animate={{ opacity: [0.02, 0.04, 0.02] }}
-                        transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-                      />
-
-                      <div className="relative z-10 flex flex-col items-center gap-4">
-                        <div className="relative">
-                          <div className="w-14 h-14 rounded-full border-2 border-[#3c9f95]/30" />
-                          <motion.div
-                            animate={{ rotate: 360 }}
-                            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                            className="absolute inset-0 flex items-center justify-center"
-                          >
-                            <div className="w-10 h-10 rounded-full border-2 border-t-[#3c9f95] border-transparent" />
-                          </motion.div>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-[#1a3a2a] text-sm font-semibold">Creating</p>
-                          <p className="text-[#8ca1c5] text-[10px] mt-0.5">Generation in progress</p>
-                        </div>
-                        <motion.button
-                          initial={{ scale: 0.9, opacity: 0 }}
-                          animate={{ scale: 1, opacity: 1 }}
-                          onClick={handleStop}
-                          className="px-4 py-1.5 rounded-full bg-white/80 text-red-500 text-[10px] font-semibold border border-red-100 shadow-sm transition-all hover:bg-red-50"
-                        >
-                          Abort
-                        </motion.button>
-                      </div>
-                    </motion.div>
-                  )}
-
-                  {/* Loading overlay - Edit mode (image exists, generating) */}
-                  {isGenerating && activeVersion && (
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="absolute inset-0 z-[55] flex items-end justify-center pb-4 pointer-events-auto bg-black/20"
-                    >
-                      <div className="bg-white/90 backdrop-blur-sm rounded-full px-3 py-1.5 shadow-md flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full border-2 border-t-[#3c9f95] border-transparent animate-spin" />
-                        <span className="text-[#1a3a2a] text-[9px] font-semibold">Refining</span>
-                      </div>
-                    </motion.div>
-                  )}
-
-                  {/* Image container - This moves with zoom/pan */}
-                  {activeVersion && (
-                    <div 
-                      className="absolute inset-0 transition-transform duration-300"
-                      style={{ 
-                        transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-                        width: '100%',
-                        height: '100%',
-                      }}
-                    >
-                      <Image
-                        src={activeVersion.image_url}
-                        fill
-                        className="w-full h-full object-cover"
-                        alt="Current Version"
-                        priority
-                      />
-
-                      {/* Annotation Canvas Overlay */}
-                      <canvas
-                        ref={canvasRef}
-                        className={`absolute inset-0 w-full h-full z-10 transition-opacity duration-300
-                          ${isAnnotating ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-                      />
-                    </div>
-                  )}
-
-                  {/* Mode Indicator */}
-                  {isAnnotating && (
-                    <div className="absolute top-6 left-6 z-20 px-4 py-2 rounded-full bg-[#1a3a2a]/80 backdrop-blur-md text-white text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 border border-white/20">
-                      <span className="w-2 h-2 rounded-full bg-[#3c9f95] animate-pulse" />
-                      Annotation Mode
-                    </div>
-                  )}
+            style={{ cursor: scale > 1 && !isAnnotating ? (isPanning ? "grabbing" : "grab") : isAnnotating ? "crosshair" : "default" }}
+            onMouseDown={onMouseDown}
+            onMouseMove={onMouseMove}
+            onMouseUp={onMouseUp}
+            onMouseLeave={onMouseUp}
+          >
+            {!activeVersion && !isGenerating && (
+              <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-[#f8fbf9] to-[#eaf1ed]">
+                <div className="rounded-2xl border border-[#dfe8e2] bg-white/88 px-8 py-8 text-center shadow-sm">
+                  <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-[#f2f8f5] text-[#3c9f95]">
+                    <span className="material-symbols-outlined text-[20px]">auto_awesome</span>
+                  </div>
+                  <p className="text-sm font-semibold text-[#1a3a2a]">First Pass Generation</p>
+                  <p className="mt-1 text-xs text-[#5c6d66]">Write a detailed prompt below to create your base face.</p>
                 </div>
               </div>
             )}
-          </AnimatePresence>
+
+            {activeVersion && (
+              <div
+                className="absolute inset-0 transition-transform duration-300"
+                style={{
+                  transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+                  width: "100%",
+                  height: "100%",
+                }}
+              >
+                <Image
+                  src={activeVersion.image_url}
+                  fill
+                  alt="Current avatar version"
+                  className="h-full w-full object-cover"
+                  priority
+                />
+                <canvas
+                  ref={canvasRef}
+                  className={cn(
+                    "absolute inset-0 z-10 h-full w-full transition-opacity duration-300",
+                    isAnnotating ? "opacity-100" : "pointer-events-none opacity-0"
+                  )}
+                />
+              </div>
+            )}
+
+            {isGenerating && (
+              <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-lg">
+                <div
+                  className="relative rounded-2xl border border-white/40 bg-white/20 px-6 py-5 text-center shadow-2xl backdrop-blur-2xl"
+                  style={{
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
+                    backgroundBlendMode: "overlay",
+                  }}
+                >
+                  <div className="relative mx-auto h-6 w-6 animate-spin rounded-full border-2 border-[#3c9f95] border-t-transparent" />
+                  <p className="relative mt-3 text-sm font-semibold text-white drop-shadow">
+                    {activeVersion ? "Refining visual" : "Generating visual"}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleStop}
+                    className="relative mt-3 inline-flex h-8 items-center justify-center rounded-full border border-white/30 bg-white/20 px-4 text-[10px] font-bold uppercase tracking-[0.16em] text-white backdrop-blur-sm hover:bg-white/30"
+                  >
+                    Stop
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {isAnnotating && (
+              <div className="absolute left-4 top-4 z-30 rounded-full border border-white/20 bg-[#1a3a2a]/80 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-white backdrop-blur">
+                Mask Mode Active
+              </div>
+            )}
+          </div>
+
+          <ToolRail
+            isAnnotating={isAnnotating}
+            hasMaskImage={Boolean(maskImageUrl)}
+            scale={scale}
+            hasActiveVersion={Boolean(activeVersion)}
+            onAction={(action) => {
+              void handleToolAction(action);
+            }}
+          />
+
+          <VersionStrip
+            versions={versions}
+            activeVersionId={activeVersionId}
+            onSelect={(versionId) => {
+              void handleSelectVersion(versionId);
+            }}
+          />
         </div>
       </div>
 
-      {/* ─── Command Center ─── */}
-      <div className="px-8 pb-12 relative z-40 shrink-0">
-        <div className="max-w-2xl mx-auto flex flex-col gap-3">
-          {error && (
-            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {error}
+      {error && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="mx-4 rounded-2xl border border-red-200 bg-white p-6 shadow-2xl max-w-sm">
+            <div className="flex items-start gap-3">
+              <span className="material-symbols-outlined text-red-500">error</span>
+              <div className="flex-1">
+                <p className="text-sm text-red-700">{error}</p>
+              </div>
             </div>
-          )}
-          {info && (
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-              {info}
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setError(null)}
+                className="rounded-lg bg-red-100 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-200"
+              >
+                Dismiss
+              </button>
             </div>
-          )}
-          <div className="bg-white/95 backdrop-blur-2xl rounded-[28px] border border-[#e4ebe4] shadow-[0_24px_56px_-12px_rgba(0,0,0,0.1)]">
-            
-            {/* Main Prompt Input Area */}
-            <div className="flex items-center gap-4 px-6 py-3">
-              <input
-                type="text"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                placeholder="Evoke a sense of ethereal presence..."
-                disabled={isGenerating}
-                className="flex-1 bg-transparent border-none outline-none focus:outline-none focus:ring-0 text-[15px] font-medium text-[#1a3a2a] placeholder:text-[#8ca1c5] disabled:opacity-50"
-              />
-              {isGenerating ? (
-                <button 
-                  onClick={handleStop}
-                  className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 transition-all shadow-lg shadow-red-500/20 flex-shrink-0"
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 20 }}>stop</span>
-                </button>
-              ) : (
-                <button 
-                  onClick={handleSend}
-                  disabled={!prompt.trim() || !isAgeValid}
-                  className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1a3a2a] text-white hover:bg-[#3c9f95] transition-all shadow-lg shadow-[#1a3a2a]/20 flex-shrink-0 disabled:opacity-30 disabled:grayscale"
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 20 }}>send</span>
-                </button>
-              )}
-            </div>
+          </div>
+        </div>
+      )}
 
-            {/* Attachments Display */}
-            {attachments.length > 0 && (
-              <div className="flex items-center gap-2 px-6 py-3 overflow-x-auto">
-                {attachments.map((attachment) => (
-                  <div key={attachment.id} className="relative group shrink-0">
-                    <Image
-                      src={attachment.url}
-                      alt={attachment.filename}
-                      width={48}
-                      height={48}
-                      className="w-12 h-12 rounded-lg object-cover border-2 border-[#3c9f95]"
-                    />
-                    <button
-                      onClick={() => handleRemoveAttachment(attachment.id)}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-                {isUploading && (
-                  <div className="w-12 h-12 rounded-lg border-2 border-dashed border-[#3c9f95] flex items-center justify-center">
-                    <div className="w-4 h-4 border-2 border-[#3c9f95] border-t-transparent rounded-full animate-spin" />
-                  </div>
+      <div className="relative z-20 px-3 pb-4 md:px-8 md:pb-7">
+        <div className="mx-auto w-full max-w-5xl">
+
+          <div className="relative">
+            <div className={cn(pipelinePanelClass, "relative overflow-visible border-[#d6dbd4] bg-white px-4 py-3 md:px-5") }>
+              <div className="pointer-events-none absolute -top-16 left-4 z-30 md:left-8">
+                <div className="pointer-events-auto">
+                  <AttachmentStrip
+                    attachments={attachments}
+                    isUploading={isUploading}
+                    onRemove={(attachmentId) => {
+                      void handleRemoveAttachment(attachmentId);
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="flex items-end gap-3">
+                <div className="flex-1">
+                  <label htmlFor="avatar-prompt" className="sr-only">
+                    Visual prompt
+                  </label>
+                  <textarea
+                    ref={promptTextareaRef}
+                    id="avatar-prompt"
+                    value={prompt}
+                    onChange={(event) => setPrompt(event.target.value)}
+                    onKeyDown={handlePromptKeyDown}
+                    rows={1}
+                    placeholder="Describe the avatar visual in detail..."
+                    disabled={isGenerating}
+                    className="max-h-36 min-h-[42px] w-full resize-none rounded-xl border border-[#d6dbd4] bg-[#fafcfb] px-4 py-2.5 text-sm text-[#1a3a2a] outline-none transition placeholder:text-[#8ca1c5] focus:border-[#3c9f95] focus:ring-2 focus:ring-[#3c9f95]/20 disabled:opacity-60"
+                  />
+                </div>
+
+                {isGenerating ? (
+                  <button
+                    type="button"
+                    onClick={handleStop}
+                    className="flex h-11 w-11 items-center justify-center rounded-full bg-red-500 text-white transition hover:bg-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
+                    aria-label="Stop generation"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">stop</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleSend();
+                    }}
+                    disabled={!isPromptValid || (hasAgeInput && !isAgeValid)}
+                    className="flex h-11 w-11 items-center justify-center rounded-full bg-[#1a3a2a] text-white transition hover:bg-[#3c9f95] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3c9f95]/45 disabled:cursor-not-allowed disabled:opacity-30"
+                    aria-label="Generate visual"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">send</span>
+                  </button>
                 )}
               </div>
-            )}
 
-            {attachments.length > 0 && <div className="h-px mx-6 bg-[#f0f3f0]" />}
+              {ageErrorMessage && (
+                <p className="mt-2 text-[11px] font-medium text-red-600">{ageErrorMessage}</p>
+              )}
 
-            <div className="h-px mx-6 bg-[#f0f3f0]" />
+              <div className="my-3 h-px w-full bg-[#edf2ee]" />
 
-            {/* Quick Settings Row */}
-            <div className="flex items-center gap-2 px-6 py-2">
-              <input
-                type="file"
-                id="file-upload"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => e.target.files && handleFileUpload(e.target.files)}
-              />
-              <label 
-                htmlFor="file-upload"
-                className="h-8 w-8 flex items-center justify-center rounded-xl bg-[#f4f7f5] text-[#8ca1c5] hover:bg-[#e4ebe4] hover:text-[#1a3a2a] transition-all cursor-pointer"
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 20 }}>attach_file</span>
-              </label>
-
-              <div className="h-5 w-px bg-[#f0f3f0] mx-1" />
-
-              {/* Aspect Ratio */}
-              <div className="relative group">
-                <button 
-                  disabled={isGenerating}
-                  className="flex items-center gap-2 px-3 h-8 rounded-xl bg-[#f4f7f5] text-[#1a3a2a] hover:bg-[#e4ebe4] transition-all disabled:opacity-50"
-                >
-                  <span className="material-symbols-outlined text-[#8ca1c5]" style={{ fontSize: 18 }}>
-                    {activeAspect === "1:1" ? "crop_square" : (activeAspect === "9:16" || activeAspect === "3:4") ? "crop_portrait" : activeAspect === "16:9" ? "crop_16_9" : "crop_landscape"}
-                  </span>
-                  <span className="text-[10px] font-bold tracking-wider">{activeAspect}</span>
-                  <span className="material-symbols-outlined text-[#8ca1c5]" style={{ fontSize: 14 }}>expand_more</span>
-                </button>
-                <div className="absolute bottom-full left-0 hidden group-hover:block pt-8 -mt-8 z-50">
-                  <div className="mb-2 w-32 bg-white rounded-xl border border-[#e4ebe4] shadow-xl p-1">
-                  {SUPPORTED_ASPECT_RATIOS.map((ratio) => (
-                    <button 
-                      key={ratio}
-                      onClick={() => setActiveAspect(ratio)}
-                      className="w-full text-left px-3 py-2 rounded-xl text-[10px] font-bold text-[#5c6d66] hover:bg-[#f4f7f5] hover:text-[#1a3a2a] transition-all flex items-center gap-2"
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
-                        {ratio === "1:1" ? "crop_square" : (ratio === "9:16" || ratio === "3:4") ? "crop_portrait" : ratio === "16:9" ? "crop_16_9" : "crop_landscape"}
-                      </span>
-                      {ratio}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-              <div className="h-5 w-px bg-[#f0f3f0] mx-1" />
-
-              {/* Model */}
-              <div className="relative group">
-                <button 
-                  disabled={isGenerating}
-                  className="flex items-center gap-2 px-3 h-8 rounded-xl bg-[#f4f7f5] text-[#1a3a2a] hover:bg-[#e4ebe4] transition-all disabled:opacity-50"
-                >
-                  <span className="material-symbols-outlined text-[#8ca1c5]" style={{ fontSize: 18 }}>neurology</span>
-                  <span className="text-[10px] font-bold tracking-wider">{activeModel}</span>
-                  <span className="material-symbols-outlined text-[#8ca1c5]" style={{ fontSize: 14 }}>expand_more</span>
-                </button>
-                <div className="absolute bottom-full left-0 hidden group-hover:block pt-8 -mt-8 z-50">
-                  <div className="mb-2 w-40 bg-white rounded-xl border border-[#e4ebe4] shadow-xl p-1">
-                  {["ChatGPT", "Nano Banana", "Seedream v5 Lite"].map((model) => (
-                    <button 
-                      key={model}
-                      onClick={() => setActiveModel(model)}
-                      className="w-full text-left px-3 py-2 rounded-xl text-[10px] font-bold text-[#5c6d66] hover:bg-[#f4f7f5] hover:text-[#1a3a2a] transition-all"
-                    >
-                      {model}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-              <div className="h-5 w-px bg-[#f0f3f0] mx-1" />
-
-              {/* Age */}
-              <div className="flex items-center gap-2 px-3 h-8 rounded-xl bg-[#f4f7f5]">
-                <span className="material-symbols-outlined text-[#8ca1c5]" style={{ fontSize: 18 }}>person</span>
-                <input 
-                  type="number" 
-                  placeholder="Age"
-                  value={age}
-                  onChange={(e) => setAge(e.target.value)}
-                  min={1}
-                  max={120}
-                  disabled={isGenerating}
-                  className="w-12 bg-transparent border-none outline-none focus:outline-none focus:ring-0 text-[10px] font-bold tracking-wider text-[#1a3a2a] placeholder:text-[#8ca1c5] disabled:opacity-50"
+              <div className="flex flex-wrap items-center gap-2" ref={menusContainerRef}>
+                <input
+                  type="file"
+                  id="visual-file-upload"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    if (event.target.files) {
+                      void handleFileUpload(event.target.files);
+                      event.target.value = "";
+                    }
+                  }}
                 />
+                <label
+                  htmlFor="visual-file-upload"
+                  className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-xl border border-[#d6dbd4] bg-[#f4f7f5] text-[#1a3a2a]/70 transition hover:border-[#3c9f95]/40 hover:text-[#1a3a2a]"
+                  aria-label="Attach reference images"
+                >
+                  <span className="material-symbols-outlined text-[18px]">attach_file</span>
+                </label>
+
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setOpenMenu((previous) => (previous === "aspect" ? null : "aspect"))}
+                    disabled={isGenerating}
+                    aria-expanded={openMenu === "aspect"}
+                    className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#d6dbd4] bg-[#f4f7f5] px-3 text-[11px] font-semibold text-[#1a3a2a] transition hover:border-[#3c9f95]/40 disabled:opacity-45"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">
+                      {generationAspect === "1:1"
+                        ? "crop_square"
+                        : generationAspect === "16:9"
+                          ? "crop_16_9"
+                          : generationAspect === "4:3"
+                            ? "crop_landscape"
+                            : "crop_portrait"}
+                    </span>
+                    <span>{generationAspect}</span>
+                    <span className="material-symbols-outlined text-[14px]">expand_more</span>
+                  </button>
+
+                  {openMenu === "aspect" && (
+                    <div className="absolute bottom-[calc(100%+8px)] left-0 z-40 w-36 rounded-xl border border-[#d6dbd4] bg-white p-1 shadow-lg">
+                      {SUPPORTED_ASPECT_RATIOS.map((ratio) => (
+                        <button
+                          key={ratio}
+                          type="button"
+                          onClick={() => {
+                            setGenerationAspect(ratio);
+                            hasInitializedGenerationAspectRef.current = true;
+                            setOpenMenu(null);
+                          }}
+                          className={cn(
+                            "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] font-semibold transition",
+                            ratio === generationAspect
+                              ? "bg-[#eaf4f2] text-[#1a3a2a]"
+                              : "text-[#5c6d66] hover:bg-[#f4f7f5]"
+                          )}
+                        >
+                          <span className="material-symbols-outlined text-[14px]">
+                            {ratio === "1:1"
+                              ? "crop_square"
+                              : ratio === "16:9"
+                                ? "crop_16_9"
+                                : ratio === "4:3"
+                                  ? "crop_landscape"
+                                  : "crop_portrait"}
+                          </span>
+                          <span>{ratio}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setOpenMenu((previous) => (previous === "model" ? null : "model"))}
+                    disabled={isGenerating}
+                    aria-expanded={openMenu === "model"}
+                    className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#d6dbd4] bg-[#f4f7f5] px-3 text-[11px] font-semibold text-[#1a3a2a] transition hover:border-[#3c9f95]/40 disabled:opacity-45"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">neurology</span>
+                    <span>{activeModel}</span>
+                    <span className="material-symbols-outlined text-[14px]">expand_more</span>
+                  </button>
+
+                  {openMenu === "model" && (
+                    <div className="absolute bottom-[calc(100%+8px)] left-0 z-40 w-44 rounded-xl border border-[#d6dbd4] bg-white p-1 shadow-lg">
+                      {MODEL_OPTIONS.map((model) => (
+                        <button
+                          key={model}
+                          type="button"
+                          onClick={() => {
+                            setActiveModel(model);
+                            setOpenMenu(null);
+                          }}
+                          className={cn(
+                            "w-full rounded-lg px-2.5 py-2 text-left text-[11px] font-semibold transition",
+                            model === activeModel
+                              ? "bg-[#eaf4f2] text-[#1a3a2a]"
+                              : "text-[#5c6d66] hover:bg-[#f4f7f5]"
+                          )}
+                        >
+                          {model}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#d6dbd4] bg-[#f4f7f5] px-3 transition">
+                  <span className="material-symbols-outlined text-[16px] text-[#5c6d66]">person</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="Age 1-120"
+                    value={age}
+                    onChange={(event) => setAge(sanitizeAgeInput(event.target.value))}
+                    disabled={isGenerating}
+                    onWheel={(event) => (event.target as HTMLInputElement).blur()}
+                    className="w-24 appearance-none border-0 bg-transparent p-0 text-[12px] font-semibold text-[#1a3a2a] shadow-none outline-none ring-0 placeholder:text-[#8ca1c5] focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none disabled:bg-transparent"
+                  />
+                </div>
               </div>
+
             </div>
           </div>
         </div>

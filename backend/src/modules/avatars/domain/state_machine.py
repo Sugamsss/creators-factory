@@ -78,8 +78,6 @@ def derive_avatar_readiness(
         completion_blockers.append("LoRA training must be completed.")
     if not context.name or len(context.name.strip()) < 2:
         completion_blockers.append("Name must be at least 2 characters.")
-    if context.age is None:
-        completion_blockers.append("Age is required.")
     if not context.description or len(context.description.strip()) < 20:
         completion_blockers.append("Description must be at least 20 characters.")
     if not context.backstory or len(context.backstory.strip()) < 80:

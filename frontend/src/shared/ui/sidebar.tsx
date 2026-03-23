@@ -29,11 +29,6 @@ const navItems = [
   { href: "/automations", icon: Zap, label: "Automations", section: "create" },
 ];
 
-const sectionLabels: Record<string, string> = {
-  core: "Overview",
-  create: "Create",
-};
-
 function FloatingParticles() {
   const [particles, setParticles] = React.useState<Array<{ x: string; y: string }>>([]);
 
@@ -84,16 +79,13 @@ function NavItem({
   isExpanded: boolean;
 }) {
   const [isHovered, setIsHovered] = React.useState(false);
-  const [mousePosition, setMousePosition] = React.useState({ x: 0, y: 0 });
+  const [mouseOffsetX, setMouseOffsetX] = React.useState(0);
   const ref = React.useRef<HTMLAnchorElement>(null);
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!ref.current) return;
     const rect = ref.current.getBoundingClientRect();
-    setMousePosition({
-      x: (e.clientX - rect.left) / rect.width - 0.5,
-      y: (e.clientY - rect.top) / rect.height - 0.5,
-    });
+    setMouseOffsetX((e.clientX - rect.left) / rect.width - 0.5);
   };
 
   return (
@@ -135,7 +127,7 @@ function NavItem({
         <div 
           className="w-5 flex justify-center"
           style={{
-            transform: isHovered ? `translate(${mousePosition.x * 3}px, ${mousePosition.y * 3}px)` : "none",
+            transform: isHovered ? `translateX(${mouseOffsetX * 3}px)` : "none",
             transition: "transform 0.1s ease-out",
           }}
         >
@@ -183,11 +175,6 @@ export function Sidebar() {
   const [isExpanded, setIsExpanded] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
   const [showUserMenu, setShowUserMenu] = React.useState(false);
-  
-  const currentSection = React.useMemo(() => {
-    const currentItem = navItems.find(item => pathname.startsWith(item.href));
-    return currentItem?.section || "core";
-  }, [pathname]);
 
   const filteredItems = searchQuery 
     ? navItems.filter(item => item.label.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -210,7 +197,7 @@ export function Sidebar() {
       )}>
         <FloatingParticles />
         
-        <div className="mb-6 px-4 flex items-center relative z-10">
+        <div className="mb-6 px-4 flex h-[74px] items-center relative z-10">
           <AnimatePresence mode="sync">
             {isExpanded ? (
               <motion.div
@@ -254,28 +241,51 @@ export function Sidebar() {
           </AnimatePresence>
         </div>
 
-        {isExpanded && (
-          <div className="mb-4 px-3 relative z-10">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/50" />
-              <input
-                type="text"
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full h-9 pl-9 pr-3 rounded-lg bg-white/10 border border-white/10 text-white text-sm placeholder:text-white/40 focus:outline-none focus:bg-white/15 transition-colors"
-              />
-              {searchQuery && (
-                <button 
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full hover:bg-white/10 text-white/50 hover:text-white"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+        <div className="mb-4 h-9 px-3 relative z-10">
+          <AnimatePresence>
+            {isExpanded && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.18 }}
+                className="relative"
+              >
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/50" />
+                <input
+                  type="text"
+                  placeholder="Search..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full h-9 pl-9 pr-3 rounded-lg bg-white/10 border border-white/10 text-white text-sm placeholder:text-white/40 focus:outline-none focus:bg-white/15 transition-colors"
+                />
+                {searchQuery && (
+                  <button 
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full hover:bg-white/10 text-white/50 hover:text-white"
+                  >
+                    ×
+                  </button>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <div className="mb-2 h-4 px-5 relative z-10">
+          <AnimatePresence>
+            {isExpanded && (
+              <motion.span
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="text-[10px] font-semibold uppercase tracking-wider text-white/40"
+              >
+                Navigation
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </div>
 
         <nav className="flex flex-1 flex-col gap-1 px-3 relative z-10">
           {filteredItems ? (
@@ -296,32 +306,19 @@ export function Sidebar() {
               )}
             </div>
           ) : (
-            <>
-              {isExpanded && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="mb-2 px-2"
-                >
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-white/40">
-                    {sectionLabels[currentSection]}
-                  </span>
-                </motion.div>
-              )}
-              {navItems
-                .filter(item => !isExpanded || item.section === currentSection || item.section === "core")
-                .map((item) => {
-                  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
-                  return (
-                    <NavItem 
-                      key={item.href}
-                      item={item}
-                      isActive={isActive}
-                      isExpanded={isExpanded}
-                    />
-                  );
-                })}
-            </>
+            <div className="relative">
+              {navItems.map((item) => {
+                const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                return (
+                  <NavItem 
+                    key={item.href}
+                    item={item}
+                    isActive={isActive}
+                    isExpanded={isExpanded}
+                  />
+                );
+              })}
+            </div>
           )}
         </nav>
 
